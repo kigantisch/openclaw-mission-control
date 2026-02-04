@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import { SignInButton, SignedIn, SignedOut, useAuth } from "@clerk/nextjs";
 import { X } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 
 import { DashboardSidebar } from "@/components/organisms/DashboardSidebar";
 import { TaskBoard } from "@/components/organisms/TaskBoard";
@@ -44,6 +45,8 @@ type Task = {
   priority: string;
   due_at?: string | null;
   assigned_agent_id?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 };
 
 type Agent = {
@@ -86,6 +89,7 @@ export default function BoardDetailPage() {
   const [isCommentsLoading, setIsCommentsLoading] = useState(false);
   const [commentsError, setCommentsError] = useState<string | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const tasksRef = useRef<Task[]>([]);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [title, setTitle] = useState("");
@@ -98,6 +102,19 @@ export default function BoardDetailPage() {
     () => (board ? `${board.name} board` : "Board"),
     [board],
   );
+
+  const latestTaskTimestamp = (items: Task[]) => {
+    let latestTime = 0;
+    items.forEach((task) => {
+      const value = task.updated_at ?? task.created_at;
+      if (!value) return;
+      const time = new Date(value).getTime();
+      if (!Number.isNaN(time) && time > latestTime) {
+        latestTime = time;
+      }
+    });
+    return latestTime ? new Date(latestTime).toISOString() : null;
+  };
 
   const loadBoard = async () => {
     if (!isSignedIn || !boardId) return;
@@ -150,6 +167,106 @@ export default function BoardDetailPage() {
     loadBoard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [boardId, isSignedIn]);
+
+  useEffect(() => {
+    tasksRef.current = tasks;
+  }, [tasks]);
+
+  useEffect(() => {
+    if (!isSignedIn || !boardId || !board) return;
+    let isCancelled = false;
+    const abortController = new AbortController();
+
+    const connect = async () => {
+      try {
+        const token = await getToken();
+        if (!token || isCancelled) return;
+        const url = new URL(`${apiBase}/api/v1/boards/${boardId}/tasks/stream`);
+        const since = latestTaskTimestamp(tasksRef.current);
+        if (since) {
+          url.searchParams.set("since", since);
+        }
+        const response = await fetch(url.toString(), {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          signal: abortController.signal,
+        });
+        if (!response.ok || !response.body) {
+          throw new Error("Unable to connect task stream.");
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (!isCancelled) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          buffer = buffer.replace(/\r\n/g, "\n");
+          let boundary = buffer.indexOf("\n\n");
+          while (boundary !== -1) {
+            const raw = buffer.slice(0, boundary);
+            buffer = buffer.slice(boundary + 2);
+            const lines = raw.split("\n");
+            let eventType = "message";
+            let data = "";
+            for (const line of lines) {
+              if (line.startsWith("event:")) {
+                eventType = line.slice(6).trim();
+              } else if (line.startsWith("data:")) {
+                data += line.slice(5).trim();
+              }
+            }
+            if (eventType === "task" && data) {
+              try {
+                const payload = JSON.parse(data) as {
+                  type?: string;
+                  task?: Task;
+                  comment?: TaskComment;
+                };
+                if (payload.comment?.task_id && payload.type === "task.comment") {
+                  setComments((prev) => {
+                    if (selectedTask?.id !== payload.comment?.task_id) {
+                      return prev;
+                    }
+                    const exists = prev.some((item) => item.id === payload.comment?.id);
+                    if (exists) {
+                      return prev;
+                    }
+                    return [...prev, payload.comment as TaskComment];
+                  });
+                } else if (payload.task) {
+                  setTasks((prev) => {
+                    const index = prev.findIndex((item) => item.id === payload.task?.id);
+                    if (index === -1) {
+                      return [payload.task as Task, ...prev];
+                    }
+                    const next = [...prev];
+                    next[index] = { ...next[index], ...(payload.task as Task) };
+                    return next;
+                  });
+                }
+              } catch {
+                // Ignore malformed payloads.
+              }
+            }
+            boundary = buffer.indexOf("\n\n");
+          }
+        }
+      } catch {
+        if (!isCancelled) {
+          setTimeout(connect, 3000);
+        }
+      }
+    };
+
+    connect();
+    return () => {
+      isCancelled = true;
+      abortController.abort();
+    };
+  }, [board, boardId, getToken, isSignedIn]);
 
   const resetForm = () => {
     setTitle("");
@@ -311,6 +428,7 @@ export default function BoardDetailPage() {
       minute: "2-digit",
     });
   };
+
 
   return (
     <DashboardShell>
@@ -506,6 +624,7 @@ export default function BoardDetailPage() {
                       key={comment.id}
                       className="rounded-xl border border-slate-200 bg-white p-3"
                     >
+                      <>
                       <div className="flex items-center justify-between text-xs text-slate-500">
                         <span>
                           {comment.agent_id
@@ -514,9 +633,37 @@ export default function BoardDetailPage() {
                         </span>
                         <span>{formatCommentTimestamp(comment.created_at)}</span>
                       </div>
-                      <p className="mt-2 text-sm text-slate-900">
-                        {comment.message || "—"}
-                      </p>
+                      {comment.message?.trim() ? (
+                        <div className="mt-2 text-sm text-slate-900">
+                          <ReactMarkdown
+                            components={{
+                              p: ({ ...props }) => (
+                                <p className="text-sm text-slate-900" {...props} />
+                              ),
+                              ul: ({ ...props }) => (
+                                <ul
+                                  className="list-disc pl-5 text-sm text-slate-900"
+                                  {...props}
+                                />
+                              ),
+                              li: ({ ...props }) => (
+                                <li className="mb-1 text-sm text-slate-900" {...props} />
+                              ),
+                              strong: ({ ...props }) => (
+                                <strong
+                                  className="font-semibold text-slate-900"
+                                  {...props}
+                                />
+                              ),
+                            }}
+                          >
+                            {comment.message}
+                          </ReactMarkdown>
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-sm text-slate-900">—</p>
+                      )}
+                      </>
                     </div>
                   ))}
                 </div>

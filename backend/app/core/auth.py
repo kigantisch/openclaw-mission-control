@@ -102,6 +102,8 @@ async def get_auth_context_optional(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
     session: Session = Depends(get_session),
 ) -> AuthContext | None:
+    if request.headers.get("X-Agent-Token"):
+        return None
     if credentials is None:
         return None
 

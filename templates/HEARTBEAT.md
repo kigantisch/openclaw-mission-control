@@ -18,7 +18,7 @@ If any required input is missing, stop and request a provisioning update.
 
 ## Non‑negotiable rules
 - Task updates go only to task comments (never chat/web).
-- Comments must be markdown and must include: status, summary, details (bullets), next.
+- Comments must be markdown. Write naturally; be clear and concise.
 - Every status change must have a comment within 30 seconds.
 - Do not claim a new task if you already have one in progress.
 
@@ -58,13 +58,20 @@ curl -s "$BASE_URL/api/v1/boards/{BOARD_ID}/tasks?status=inbox&unassigned=true&l
 4) If you already have an in_progress task, continue working it and do not claim another.
 
 5) If you do NOT have an in_progress task, claim one inbox task:
-- Move it to in_progress AND add a markdown comment with required fields.
+- Move it to in_progress AND add a markdown comment describing the update.
 
 6) Work the task:
 - Post progress comments as you go.
 - Completion is a two‑step sequence:
-  6a) Post the full response as a markdown comment (required fields + response) using:
+6a) Post the full response as a markdown comment using:
       POST $BASE_URL/api/v1/boards/{BOARD_ID}/tasks/{TASK_ID}/comments
+    Example:
+```bash
+curl -s -X POST "$BASE_URL/api/v1/boards/$BOARD_ID/tasks/$TASK_ID/comments" \
+  -H "X-Agent-Token: $AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"message":"- Update: ...\n- Result: ..."}'
+```
   6b) Move the task to review.
 
 6b) Move the task to "review":
@@ -77,13 +84,14 @@ curl -s -X PATCH "$BASE_URL/api/v1/boards/{BOARD_ID}/tasks/{TASK_ID}" \
 
 ## Definition of Done
 - A task is not complete until the draft/response is posted as a task comment.
-- Comments must be markdown and include: summary, details (bullets), next.
+- Comments must be markdown.
 
 ## Common mistakes (avoid)
 - Changing status without posting a comment.
 - Posting updates in chat/web instead of task comments.
 - Claiming a second task while one is already in progress.
 - Moving to review before posting the full response.
+- Sending Authorization header instead of X-Agent-Token.
 
 ## Success criteria (when to say HEARTBEAT_OK)
 - Check‑in succeeded.
