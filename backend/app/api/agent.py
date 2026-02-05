@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from uuid import UUID
+import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import Session, select
@@ -13,13 +14,22 @@ from app.api import tasks as tasks_api
 from app.api.deps import ActorContext, get_board_or_404, get_task_or_404
 from app.core.agent_auth import AgentAuthContext, get_agent_auth_context
 from app.db.session import get_session
+from app.integrations.openclaw_gateway import (
+    GatewayConfig as GatewayClientConfig,
+    OpenClawGatewayError,
+    ensure_session,
+    send_message,
+)
+from app.models.agents import Agent
 from app.models.boards import Board
+from app.models.gateways import Gateway
 from app.schemas.approvals import ApprovalCreate, ApprovalRead
 from app.schemas.board_memory import BoardMemoryCreate, BoardMemoryRead
 from app.schemas.board_onboarding import BoardOnboardingRead
 from app.schemas.boards import BoardRead
 from app.schemas.tasks import TaskCommentCreate, TaskCommentRead, TaskRead, TaskUpdate
-from app.schemas.agents import AgentCreate, AgentHeartbeatCreate, AgentRead
+from app.schemas.agents import AgentCreate, AgentHeartbeatCreate, AgentNudge, AgentRead
+from app.services.activity_log import record_activity
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -31,6 +41,15 @@ def _actor(agent_ctx: AgentAuthContext) -> ActorContext:
 def _guard_board_access(agent_ctx: AgentAuthContext, board: Board) -> None:
     if agent_ctx.agent.board_id and agent_ctx.agent.board_id != board.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+
+
+def _gateway_config(session: Session, board: Board) -> GatewayClientConfig:
+    if not board.gateway_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
+    gateway = session.get(Gateway, board.gateway_id)
+    if gateway is None or not gateway.url:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
+    return GatewayClientConfig(url=gateway.url, token=gateway.token)
 
 
 @router.get("/boards", response_model=list[BoardRead])
@@ -51,6 +70,32 @@ def get_board(
 ) -> Board:
     _guard_board_access(agent_ctx, board)
     return board
+
+
+@router.get("/agents", response_model=list[AgentRead])
+def list_agents(
+    board_id: UUID | None = Query(default=None),
+    limit: int | None = Query(default=None, ge=1, le=200),
+    session: Session = Depends(get_session),
+    agent_ctx: AgentAuthContext = Depends(get_agent_auth_context),
+) -> list[AgentRead]:
+    statement = select(Agent)
+    if agent_ctx.agent.board_id:
+        if board_id and board_id != agent_ctx.agent.board_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+        statement = statement.where(Agent.board_id == agent_ctx.agent.board_id)
+    elif board_id:
+        statement = statement.where(Agent.board_id == board_id)
+    if limit is not None:
+        statement = statement.limit(limit)
+    agents = list(session.exec(statement))
+    main_session_keys = agents_api._get_gateway_main_session_keys(session)
+    return [
+        agents_api._to_agent_read(
+            agents_api._with_computed_status(agent), main_session_keys
+        )
+        for agent in agents
+    ]
 
 
 @router.get("/boards/{board_id}/tasks", response_model=list[TaskRead])
@@ -207,7 +252,7 @@ def update_onboarding(
 
 
 @router.post("/agents", response_model=AgentRead)
-def create_agent(
+async def create_agent(
     payload: AgentCreate,
     session: Session = Depends(get_session),
     agent_ctx: AgentAuthContext = Depends(get_agent_auth_context),
@@ -217,11 +262,67 @@ def create_agent(
     if not agent_ctx.agent.board_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
     payload = AgentCreate(**{**payload.model_dump(), "board_id": agent_ctx.agent.board_id})
-    return agents_api.create_agent(
+    return await agents_api.create_agent(
         payload=payload,
         session=session,
         actor=_actor(agent_ctx),
     )
+
+
+@router.post("/boards/{board_id}/agents/{agent_id}/nudge")
+def nudge_agent(
+    payload: AgentNudge,
+    agent_id: str,
+    board: Board = Depends(get_board_or_404),
+    session: Session = Depends(get_session),
+    agent_ctx: AgentAuthContext = Depends(get_agent_auth_context),
+) -> dict[str, bool]:
+    _guard_board_access(agent_ctx, board)
+    if not agent_ctx.agent.is_board_lead:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    target = session.get(Agent, agent_id)
+    if target is None or (target.board_id and target.board_id != board.id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    if not target.openclaw_session_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Target agent has no session key",
+        )
+    message = payload.message.strip()
+    if not message:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="message is required",
+        )
+    config = _gateway_config(session, board)
+    async def _send() -> None:
+        await ensure_session(target.openclaw_session_id, config=config, label=target.name)
+        await send_message(
+            message,
+            session_key=target.openclaw_session_id,
+            config=config,
+            deliver=True,
+        )
+
+    try:
+        asyncio.run(_send())
+    except OpenClawGatewayError as exc:
+        record_activity(
+            session,
+            event_type="agent.nudge.failed",
+            message=f"Nudge failed for {target.name}: {exc}",
+            agent_id=agent_ctx.agent.id,
+        )
+        session.commit()
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    record_activity(
+        session,
+        event_type="agent.nudge.sent",
+        message=f"Nudge sent to {target.name}.",
+        agent_id=agent_ctx.agent.id,
+    )
+    session.commit()
+    return {"ok": True}
 
 
 @router.post("/heartbeat", response_model=AgentRead)

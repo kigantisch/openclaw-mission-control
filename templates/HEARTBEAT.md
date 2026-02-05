@@ -1,6 +1,6 @@
 # HEARTBEAT.md
 
-> This file is provisioned from HEARTBEAT_LEAD.md or HEARTBEAT_AGENT.md. If you see this template directly, follow the agent loop below.
+> This file is provisioned per-agent. Follow the loop below if you see this directly.
 
 ## Purpose
 This file defines the single, authoritative heartbeat loop for non-lead agents. Follow it exactly.

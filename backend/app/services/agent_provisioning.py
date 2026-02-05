@@ -10,7 +10,11 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoes
 
 from app.core.config import settings
 from app.integrations.openclaw_gateway import GatewayConfig as GatewayClientConfig
-from app.integrations.openclaw_gateway import OpenClawGatewayError, ensure_session, openclaw_call
+from app.integrations.openclaw_gateway import (
+    OpenClawGatewayError,
+    ensure_session,
+    openclaw_call,
+)
 from app.models.agents import Agent
 from app.models.boards import Board
 from app.models.gateways import Gateway
@@ -241,6 +245,12 @@ async def _supported_gateway_files(config: GatewayClientConfig) -> set[str]:
     return set(DEFAULT_GATEWAY_FILES)
 
 
+async def _reset_session(session_key: str, config: GatewayClientConfig) -> None:
+    if not session_key:
+        return
+    await openclaw_call("sessions.reset", {"key": session_key}, config=config)
+
+
 async def _gateway_agent_files_index(
     agent_id: str, config: GatewayClientConfig
 ) -> dict[str, dict[str, Any]]:
@@ -422,6 +432,8 @@ async def provision_agent(
     user: User | None,
     *,
     action: str = "provision",
+    force_bootstrap: bool = False,
+    reset_session: bool = False,
 ) -> None:
     if not gateway.url:
         return
@@ -440,7 +452,7 @@ async def provision_agent(
     supported = await _supported_gateway_files(client_config)
     existing_files = await _gateway_agent_files_index(agent_id, client_config)
     include_bootstrap = True
-    if action == "update":
+    if action == "update" and not force_bootstrap:
         if not existing_files:
             include_bootstrap = False
         else:
@@ -462,6 +474,8 @@ async def provision_agent(
             {"agentId": agent_id, "name": name, "content": content},
             config=client_config,
         )
+    if reset_session:
+        await _reset_session(session_key, client_config)
 
 
 async def provision_main_agent(
@@ -471,6 +485,8 @@ async def provision_main_agent(
     user: User | None,
     *,
     action: str = "provision",
+    force_bootstrap: bool = False,
+    reset_session: bool = False,
 ) -> None:
     if not gateway.url:
         return
@@ -486,8 +502,8 @@ async def provision_main_agent(
     context = _build_main_context(agent, gateway, auth_token, user)
     supported = await _supported_gateway_files(client_config)
     existing_files = await _gateway_agent_files_index(agent_id, client_config)
-    include_bootstrap = action != "update"
-    if action == "update":
+    include_bootstrap = action != "update" or force_bootstrap
+    if action == "update" and not force_bootstrap:
         if not existing_files:
             include_bootstrap = False
         else:
@@ -510,6 +526,8 @@ async def provision_main_agent(
             {"agentId": agent_id, "name": name, "content": content},
             config=client_config,
         )
+    if reset_session:
+        await _reset_session(gateway.main_session_key, client_config)
 
 
 async def cleanup_agent(

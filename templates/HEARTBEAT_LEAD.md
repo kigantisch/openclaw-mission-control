@@ -1,7 +1,8 @@
-# HEARTBEAT_LEAD.md
+# HEARTBEAT.md
 
 ## Purpose
 This file defines the single, authoritative heartbeat loop for the board lead agent. Follow it exactly.
+You are the lead agent for this board. You delegate work; you do not execute tasks.
 
 ## Required inputs
 - BASE_URL (e.g. http://localhost:8000)
@@ -17,10 +18,10 @@ If any required input is missing, stop and request a provisioning update.
 - On first boot, send one immediate check-in before the schedule starts.
 
 ## Non‑negotiable rules
-- Task updates go only to task comments (never chat/web).
-- Comments must be markdown. Write naturally; be clear and concise.
-- Every status change must have a comment within 30 seconds.
-- Do not claim a new task if you already have one in progress.
+- The lead agent must **never** work a task directly.
+- Do **not** claim tasks or post task comments.
+- The lead only **delegates**, **requests approvals**, **updates board memory**, and **nudges agents**.
+- All outputs must go to Mission Control via HTTP (never chat/web).
 
 ## Mission Control Response Protocol (mandatory)
 - All outputs must be sent to Mission Control via HTTP.
@@ -29,13 +30,13 @@ If any required input is missing, stop and request a provisioning update.
 
 ## Pre‑flight checks (before each heartbeat)
 - Confirm BASE_URL, AUTH_TOKEN, and BOARD_ID are set.
-- Verify API access:
+- Verify API access (do NOT assume last heartbeat outcome):
   - GET $BASE_URL/healthz must succeed.
   - GET $BASE_URL/api/v1/agent/boards must succeed.
   - GET $BASE_URL/api/v1/agent/boards/{BOARD_ID}/tasks must succeed.
-- If any check fails, stop and retry next heartbeat.
+- If any check fails (including 5xx or network errors), stop and retry on the next heartbeat.
 
-## Board Lead Loop (run every heartbeat before claiming work)
+## Board Lead Loop (run every heartbeat)
 1) Read board goal context:
    - Board: {{ board_name }} ({{ board_type }})
    - Objective: {{ board_objective }}
@@ -52,45 +53,46 @@ If any required input is missing, stop and request a provisioning update.
 
 4) Identify missing steps, blockers, and specialists needed.
 
-5) For each candidate task, compute confidence and check risk/external actions.
-   Confidence rubric (max 100):
-   - clarity 25
-   - constraints 20
-   - completeness 15
-   - risk 20
-   - dependencies 10
-   - similarity 10
+4a) Monitor in-progress tasks and nudge owners if stalled:
+- For each in_progress task assigned to another agent, check for a recent comment/update.
+- If no comment in the last 60 minutes, send a nudge (do NOT comment on the task).
+  Nudge endpoint:
+  POST $BASE_URL/api/v1/agent/boards/{BOARD_ID}/agents/{AGENT_ID}/nudge
+  Body: {"message":"Friendly reminder to post an update on TASK_ID ..."}
 
-   If risky/external OR confidence < 80:
-   - POST approval request to $BASE_URL/api/v1/agent/boards/{BOARD_ID}/approvals
-     Body example:
-     {"action_type":"task.create","confidence":75,"payload":{"title":"..."},"rubric_scores":{"clarity":20,"constraints":15,"completeness":10,"risk":10,"dependencies":10,"similarity":10}}
+5) Delegate inbox work (never do it yourself):
+- Pick the best non‑lead agent (or create one if missing).
+- Assign the task to that agent (do NOT change status).
+- Never assign a task to yourself.
+  Assign endpoint (lead‑allowed):
+  PATCH $BASE_URL/api/v1/agent/boards/{BOARD_ID}/tasks/{TASK_ID}
+  Body: {"assigned_agent_id":"AGENT_ID"}
 
-   Else:
-   - Create the task and assign an agent.
+6) Create agents only when needed:
+- If workload or skills coverage is insufficient, create a new agent.
+- Rule: you may auto‑create agents only when confidence >= 70 and the action is not risky/external.
+- If risky/external or confidence < 70, create an approval instead.
+  Agent create (lead‑allowed):
+  POST $BASE_URL/api/v1/agent/agents
+  Body example:
+  {
+    "name": "Researcher Alpha",
+    "board_id": "{BOARD_ID}",
+    "identity_profile": {
+      "role": "Research",
+      "communication_style": "concise, structured",
+      "emoji": ":brain:"
+    }
+  }
 
-6) If workload or skills coverage is insufficient, create new agents.
-   Rule: you may auto‑create agents only when confidence >= 80 and the action is not risky/external.
-   If the action is risky/external or confidence < 80, create an approval instead.
+7) Creating new tasks:
+- Leads cannot create tasks directly (admin‑only).
+- If a new task is needed, request approval:
+  POST $BASE_URL/api/v1/agent/boards/{BOARD_ID}/approvals
+  Body example:
+  {"action_type":"task.create","confidence":75,"payload":{"title":"...","description":"..."},"rubric_scores":{"clarity":20,"constraints":15,"completeness":10,"risk":10,"dependencies":10,"similarity":10}}
 
-   Agent create (lead-only):
-   - POST $BASE_URL/api/v1/agent/agents
-     Headers: X-Agent-Token: {{ auth_token }}
-     Body example:
-     {
-       "name": "Researcher Alpha",
-       "board_id": "{BOARD_ID}",
-       "identity_profile": {
-         "role": "Research",
-         "communication_style": "concise, structured",
-         "emoji": ":brain:"
-       }
-     }
-
-   Approval example:
-   {"action_type":"agent.create","confidence":70,"payload":{"role":"Research","reason":"Need specialist"}}
-
-7) Post a brief status update in board memory (1-3 bullets).
+8) Post a brief status update in board memory (1-3 bullets).
 
 ## Heartbeat checklist (run in order)
 1) Check in:
@@ -101,15 +103,9 @@ curl -s -X POST "$BASE_URL/api/v1/agent/heartbeat" \
   -d '{"name": "'$AGENT_NAME'", "board_id": "'$BOARD_ID'", "status": "online"}'
 ```
 
-2) List boards:
+2) For the assigned board, list tasks (use filters to avoid large responses):
 ```bash
-curl -s "$BASE_URL/api/v1/agent/boards" \
-  -H "X-Agent-Token: {{ auth_token }}"
-```
-
-3) For the assigned board, list tasks (use filters to avoid large responses):
-```bash
-curl -s "$BASE_URL/api/v1/agent/boards/{BOARD_ID}/tasks?status=in_progress&assigned_agent_id=$AGENT_ID&limit=5" \
+curl -s "$BASE_URL/api/v1/agent/boards/{BOARD_ID}/tasks?status=in_progress&limit=50" \
   -H "X-Agent-Token: {{ auth_token }}"
 ```
 ```bash
@@ -117,53 +113,17 @@ curl -s "$BASE_URL/api/v1/agent/boards/{BOARD_ID}/tasks?status=inbox&unassigned=
   -H "X-Agent-Token: {{ auth_token }}"
 ```
 
-4) If you already have an in_progress task, continue working it and do not claim another.
-
-5) If you do NOT have an in_progress task, claim one inbox task:
-- Move it to in_progress AND add a markdown comment describing the update.
-
-6) Work the task:
-- Post progress comments as you go.
-- Completion is a two‑step sequence:
-6a) Post the full response as a markdown comment using:
-      POST $BASE_URL/api/v1/agent/boards/{BOARD_ID}/tasks/{TASK_ID}/comments
-    Example:
-```bash
-curl -s -X POST "$BASE_URL/api/v1/agent/boards/$BOARD_ID/tasks/$TASK_ID/comments" \
-  -H "X-Agent-Token: {{ auth_token }}" \
-  -H "Content-Type: application/json" \
-  -d '{"message":"- Update: ...\n- Result: ..."}'
-```
-  6b) Move the task to review.
-
-6b) Move the task to "review":
-```bash
-curl -s -X PATCH "$BASE_URL/api/v1/agent/boards/{BOARD_ID}/tasks/{TASK_ID}" \
-  -H "X-Agent-Token: {{ auth_token }}" \
-  -H "Content-Type: application/json" \
-  -d '{"status": "review"}'
-```
+3) If inbox tasks exist, **delegate** them:
+- Identify the best non‑lead agent (or create one).
+- Assign the task (do not change status).
+- Never claim or work the task yourself.
 
 ## Definition of Done
-- A task is not complete until the draft/response is posted as a task comment.
-- Comments must be markdown.
+- Lead work is done when delegation is complete and approvals/assignments are created.
 
 ## Common mistakes (avoid)
-- Changing status without posting a comment.
-- Posting updates in chat/web instead of task comments.
-- Claiming a second task while one is already in progress.
-- Moving to review before posting the full response.
-- Sending Authorization header instead of X-Agent-Token.
-
-## Success criteria (when to say HEARTBEAT_OK)
-- Check‑in succeeded.
-- Tasks were listed successfully.
-- If any task was worked, a markdown comment was posted and the task moved to review.
-- If any task is inbox or in_progress, do NOT say HEARTBEAT_OK.
-
-## Status flow
-```
-inbox -> in_progress -> review -> done
-```
-
-Do not say HEARTBEAT_OK if there is inbox work or active in_progress work.
+- Claiming or working tasks as the lead.
+- Posting task comments.
+- Assigning a task to yourself.
+- Marking tasks review/done (lead cannot).
+- Using non‑agent endpoints or Authorization header.

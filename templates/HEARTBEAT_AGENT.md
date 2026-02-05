@@ -1,4 +1,4 @@
-# HEARTBEAT_AGENT.md
+# HEARTBEAT.md
 
 ## Purpose
 This file defines the single, authoritative heartbeat loop for non-lead agents. Follow it exactly.
@@ -29,11 +29,11 @@ If any required input is missing, stop and request a provisioning update.
 
 ## Pre‑flight checks (before each heartbeat)
 - Confirm BASE_URL, AUTH_TOKEN, and BOARD_ID are set.
-- Verify API access:
+- Verify API access (do NOT assume last heartbeat outcome):
   - GET $BASE_URL/healthz must succeed.
   - GET $BASE_URL/api/v1/agent/boards must succeed.
   - GET $BASE_URL/api/v1/agent/boards/{BOARD_ID}/tasks must succeed.
-- If any check fails, stop and retry next heartbeat.
+- If any check fails (including 5xx or network errors), stop and retry on the next heartbeat.
 
 ## Heartbeat checklist (run in order)
 1) Check in:

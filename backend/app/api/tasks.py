@@ -315,6 +315,48 @@ def update_task(
     comment = updates.pop("comment", None)
     if comment is not None and not comment.strip():
         comment = None
+
+    if actor.actor_type == "agent" and actor.agent and actor.agent.is_board_lead:
+        allowed_fields = {"assigned_agent_id"}
+        if comment is not None or "status" in updates or not set(updates).issubset(allowed_fields):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Board leads can only assign or unassign tasks.",
+            )
+        if "assigned_agent_id" in updates:
+            assigned_id = updates["assigned_agent_id"]
+            if assigned_id:
+                agent = session.get(Agent, assigned_id)
+                if agent is None:
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+                if agent.is_board_lead:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Board leads cannot assign tasks to themselves.",
+                    )
+                if agent.board_id and task.board_id and agent.board_id != task.board_id:
+                    raise HTTPException(status_code=status.HTTP_409_CONFLICT)
+                task.assigned_agent_id = agent.id
+            else:
+                task.assigned_agent_id = None
+        task.updated_at = datetime.utcnow()
+        session.add(task)
+        if task.status != previous_status:
+            event_type = "task.status_changed"
+            message = f"Task moved to {task.status}: {task.title}."
+        else:
+            event_type = "task.updated"
+            message = f"Task updated: {task.title}."
+        record_activity(
+            session,
+            event_type=event_type,
+            task_id=task.id,
+            message=message,
+            agent_id=actor.agent.id,
+        )
+        session.commit()
+        session.refresh(task)
+        return task
     if actor.actor_type == "agent":
         if actor.agent and actor.agent.board_id and task.board_id:
             if actor.agent.board_id != task.board_id:
@@ -429,6 +471,11 @@ def create_task_comment(
     actor: ActorContext = Depends(require_admin_or_agent),
 ) -> ActivityEvent:
     if actor.actor_type == "agent" and actor.agent:
+        if actor.agent.is_board_lead:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Board leads cannot comment on tasks. Delegate to another agent.",
+            )
         if actor.agent.board_id and task.board_id and actor.agent.board_id != task.board_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
     if not payload.message.strip():

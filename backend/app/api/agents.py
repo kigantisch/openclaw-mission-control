@@ -445,9 +445,26 @@ async def update_agent(
                 detail="Gateway configuration is required",
             )
         if is_main_agent:
-            await provision_main_agent(agent, gateway, raw_token, auth.user, action="update")
+            await provision_main_agent(
+                agent,
+                gateway,
+                raw_token,
+                auth.user,
+                action="update",
+                force_bootstrap=force,
+                reset_session=True,
+            )
         else:
-            await provision_agent(agent, board, gateway, raw_token, auth.user, action="update")
+            await provision_agent(
+                agent,
+                board,
+                gateway,
+                raw_token,
+                auth.user,
+                action="update",
+                force_bootstrap=force,
+                reset_session=True,
+            )
         await _send_wakeup_message(agent, client_config, verb="updated")
         agent.provision_confirm_token_hash = None
         agent.provision_requested_at = None

@@ -49,3 +49,7 @@ class AgentHeartbeat(SQLModel):
 class AgentHeartbeatCreate(AgentHeartbeat):
     name: str
     board_id: UUID | None = None
+
+
+class AgentNudge(SQLModel):
+    message: str

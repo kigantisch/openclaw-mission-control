@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import { SignInButton, SignedIn, SignedOut, useAuth } from "@clerk/nextjs";
-import { X } from "lucide-react";
+import { Pencil, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
+import { BoardApprovalsPanel } from "@/components/BoardApprovalsPanel";
 import { DashboardSidebar } from "@/components/organisms/DashboardSidebar";
 import { TaskBoard } from "@/components/organisms/TaskBoard";
 import { DashboardShell } from "@/components/templates/DashboardShell";
@@ -73,12 +74,29 @@ type TaskComment = {
   created_at: string;
 };
 
+type Approval = {
+  id: string;
+  action_type: string;
+  payload?: Record<string, unknown> | null;
+  confidence: number;
+  rubric_scores?: Record<string, number> | null;
+  status: string;
+  created_at: string;
+  resolved_at?: string | null;
+};
+
 const apiBase = getApiBaseUrl();
 
 const priorities = [
   { value: "low", label: "Low" },
   { value: "medium", label: "Medium" },
   { value: "high", label: "High" },
+];
+const statusOptions = [
+  { value: "inbox", label: "Inbox" },
+  { value: "in_progress", label: "In progress" },
+  { value: "review", label: "Review" },
+  { value: "done", label: "Done" },
 ];
 
 const EMOJI_GLYPHS: Record<string, string> = {
@@ -112,6 +130,15 @@ export default function BoardDetailPage() {
   const [commentsError, setCommentsError] = useState<string | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const tasksRef = useRef<Task[]>([]);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [isApprovalsOpen, setIsApprovalsOpen] = useState(false);
+
+  const [approvals, setApprovals] = useState<Approval[]>([]);
+  const [isApprovalsLoading, setIsApprovalsLoading] = useState(false);
+  const [approvalsError, setApprovalsError] = useState<string | null>(null);
+  const [approvalsUpdatingId, setApprovalsUpdatingId] = useState<string | null>(
+    null,
+  );
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [title, setTitle] = useState("");
@@ -119,6 +146,14 @@ export default function BoardDetailPage() {
   const [priority, setPriority] = useState("medium");
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+
+  const [editTitle, setEditTitle] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editStatus, setEditStatus] = useState("inbox");
+  const [editPriority, setEditPriority] = useState("medium");
+  const [editAssigneeId, setEditAssigneeId] = useState("");
+  const [isSavingTask, setIsSavingTask] = useState(false);
+  const [saveTaskError, setSaveTaskError] = useState<string | null>(null);
 
   const titleLabel = useMemo(
     () => (board ? `${board.name} board` : "Board"),
@@ -193,6 +228,59 @@ export default function BoardDetailPage() {
   useEffect(() => {
     tasksRef.current = tasks;
   }, [tasks]);
+
+  const loadApprovals = useCallback(async () => {
+    if (!isSignedIn || !boardId) return;
+    setIsApprovalsLoading(true);
+    setApprovalsError(null);
+    try {
+      const token = await getToken();
+      const response = await fetch(
+        `${apiBase}/api/v1/boards/${boardId}/approvals`,
+        {
+          headers: {
+            Authorization: token ? `Bearer ${token}` : "",
+          },
+        },
+      );
+      if (!response.ok) {
+        throw new Error("Unable to load approvals.");
+      }
+      const data = (await response.json()) as Approval[];
+      setApprovals(data);
+    } catch (err) {
+      setApprovalsError(
+        err instanceof Error ? err.message : "Unable to load approvals.",
+      );
+    } finally {
+      setIsApprovalsLoading(false);
+    }
+  }, [boardId, getToken, isSignedIn]);
+
+  useEffect(() => {
+    loadApprovals();
+    if (!isSignedIn || !boardId) return;
+    const interval = setInterval(loadApprovals, 15000);
+    return () => clearInterval(interval);
+  }, [boardId, isSignedIn, loadApprovals]);
+
+  useEffect(() => {
+    if (!selectedTask) {
+      setEditTitle("");
+      setEditDescription("");
+      setEditStatus("inbox");
+      setEditPriority("medium");
+      setEditAssigneeId("");
+      setSaveTaskError(null);
+      return;
+    }
+    setEditTitle(selectedTask.title);
+    setEditDescription(selectedTask.description ?? "");
+    setEditStatus(selectedTask.status);
+    setEditPriority(selectedTask.priority);
+    setEditAssigneeId(selectedTask.assigned_agent_id ?? "");
+    setSaveTaskError(null);
+  }, [selectedTask]);
 
   useEffect(() => {
     if (!isSignedIn || !boardId || !board) return;
@@ -358,6 +446,38 @@ export default function BoardDetailPage() {
     [tasks, assigneeById],
   );
 
+  const boardAgents = useMemo(
+    () => agents.filter((agent) => !boardId || agent.board_id === boardId),
+    [agents, boardId],
+  );
+
+  const assignableAgents = useMemo(
+    () => boardAgents.filter((agent) => !agent.is_board_lead),
+    [boardAgents],
+  );
+
+  const hasTaskChanges = useMemo(() => {
+    if (!selectedTask) return false;
+    const normalizedTitle = editTitle.trim();
+    const normalizedDescription = editDescription.trim();
+    const currentDescription = (selectedTask.description ?? "").trim();
+    const currentAssignee = selectedTask.assigned_agent_id ?? "";
+    return (
+      normalizedTitle !== selectedTask.title ||
+      normalizedDescription !== currentDescription ||
+      editStatus !== selectedTask.status ||
+      editPriority !== selectedTask.priority ||
+      editAssigneeId !== currentAssignee
+    );
+  }, [
+    editAssigneeId,
+    editDescription,
+    editPriority,
+    editStatus,
+    editTitle,
+    selectedTask,
+  ]);
+
   const orderedComments = useMemo(() => {
     return [...comments].sort((a, b) => {
       const aTime = new Date(a.created_at).getTime();
@@ -366,10 +486,23 @@ export default function BoardDetailPage() {
     });
   }, [comments]);
 
-  const boardAgents = useMemo(
-    () => agents.filter((agent) => !boardId || agent.board_id === boardId),
-    [agents, boardId],
+  const pendingApprovals = useMemo(
+    () => approvals.filter((approval) => approval.status === "pending"),
+    [approvals],
   );
+
+  const taskApprovals = useMemo(() => {
+    if (!selectedTask) return [];
+    const taskId = selectedTask.id;
+    return approvals.filter((approval) => {
+      const payload = approval.payload ?? {};
+      const payloadTaskId =
+        (payload as Record<string, unknown>).task_id ??
+        (payload as Record<string, unknown>).taskId ??
+        (payload as Record<string, unknown>).taskID;
+      return payloadTaskId === taskId;
+    });
+  }, [approvals, selectedTask]);
 
   const workingAgentIds = useMemo(() => {
     const working = new Set<string>();
@@ -430,6 +563,63 @@ export default function BoardDetailPage() {
     setSelectedTask(null);
     setComments([]);
     setCommentsError(null);
+    setIsEditDialogOpen(false);
+  };
+
+  const handleTaskSave = async (closeOnSuccess = false) => {
+    if (!selectedTask || !isSignedIn || !boardId) return;
+    const trimmedTitle = editTitle.trim();
+    if (!trimmedTitle) {
+      setSaveTaskError("Title is required.");
+      return;
+    }
+    setIsSavingTask(true);
+    setSaveTaskError(null);
+    try {
+      const token = await getToken();
+      const response = await fetch(
+        `${apiBase}/api/v1/boards/${boardId}/tasks/${selectedTask.id}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: token ? `Bearer ${token}` : "",
+          },
+          body: JSON.stringify({
+            title: trimmedTitle,
+            description: editDescription.trim() || null,
+            status: editStatus,
+            priority: editPriority,
+            assigned_agent_id: editAssigneeId || null,
+          }),
+        },
+      );
+      if (!response.ok) {
+        throw new Error("Unable to update task.");
+      }
+      const updated = (await response.json()) as Task;
+      setTasks((prev) =>
+        prev.map((task) => (task.id === updated.id ? updated : task)),
+      );
+      setSelectedTask(updated);
+      if (closeOnSuccess) {
+        setIsEditDialogOpen(false);
+      }
+    } catch (err) {
+      setSaveTaskError(err instanceof Error ? err.message : "Something went wrong.");
+    } finally {
+      setIsSavingTask(false);
+    }
+  };
+
+  const handleTaskReset = () => {
+    if (!selectedTask) return;
+    setEditTitle(selectedTask.title);
+    setEditDescription(selectedTask.description ?? "");
+    setEditStatus(selectedTask.status);
+    setEditPriority(selectedTask.priority);
+    setEditAssigneeId(selectedTask.assigned_agent_id ?? "");
+    setSaveTaskError(null);
   };
 
   const agentInitials = (agent: Agent) =>
@@ -473,6 +663,54 @@ export default function BoardDetailPage() {
       minute: "2-digit",
     });
   };
+
+  const formatApprovalTimestamp = (value?: string | null) => {
+    if (!value) return "—";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
+  const handleApprovalDecision = useCallback(
+    async (approvalId: string, status: "approved" | "rejected") => {
+      if (!isSignedIn || !boardId) return;
+      setApprovalsUpdatingId(approvalId);
+      setApprovalsError(null);
+      try {
+        const token = await getToken();
+        const response = await fetch(
+          `${apiBase}/api/v1/boards/${boardId}/approvals/${approvalId}`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: token ? `Bearer ${token}` : "",
+            },
+            body: JSON.stringify({ status }),
+          },
+        );
+        if (!response.ok) {
+          throw new Error("Unable to update approval.");
+        }
+        const updated = (await response.json()) as Approval;
+        setApprovals((prev) =>
+          prev.map((item) => (item.id === approvalId ? updated : item)),
+        );
+      } catch (err) {
+        setApprovalsError(
+          err instanceof Error ? err.message : "Unable to update approval.",
+        );
+      } finally {
+        setApprovalsUpdatingId(null);
+      }
+    },
+    [boardId, getToken, isSignedIn],
+  );
 
   return (
     <DashboardShell>
@@ -519,6 +757,18 @@ export default function BoardDetailPage() {
                   </div>
                   <Button onClick={() => setIsDialogOpen(true)}>
                     New task
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => setIsApprovalsOpen(true)}
+                    className="relative"
+                  >
+                    Approvals
+                    {pendingApprovals.length > 0 ? (
+                      <span className="ml-2 inline-flex min-w-[20px] items-center justify-center rounded-full bg-slate-900 px-2 py-0.5 text-xs font-semibold text-white">
+                        {pendingApprovals.length}
+                      </span>
+                    ) : null}
                   </Button>
                   <Button
                     variant="outline"
@@ -633,24 +883,34 @@ export default function BoardDetailPage() {
           isDetailOpen ? "translate-x-0" : "translate-x-full",
         )}
       >
-        <div className="flex h-full flex-col">
-          <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Task detail
-              </p>
-              <p className="mt-1 text-sm font-medium text-slate-900">
-                {selectedTask?.title ?? "Task"}
-              </p>
+          <div className="flex h-full flex-col">
+            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Task detail
+                </p>
+                <p className="mt-1 text-sm font-medium text-slate-900">
+                  {selectedTask?.title ?? "Task"}
+                </p>
+              </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsEditDialogOpen(true)}
+                className="rounded-lg border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-50"
+                disabled={!selectedTask}
+              >
+                <Pencil className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={closeComments}
+                className="rounded-lg border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-50"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={closeComments}
-              className="rounded-lg border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-50"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
+            </div>
           <div className="flex-1 space-y-6 overflow-y-auto px-6 py-5">
             <div className="space-y-2">
               <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
@@ -659,6 +919,86 @@ export default function BoardDetailPage() {
               <p className="text-sm text-slate-700 whitespace-pre-wrap break-words">
                 {selectedTask?.description || "No description provided."}
               </p>
+            </div>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Approvals
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsApprovalsOpen(true)}
+                >
+                  View all
+                </Button>
+              </div>
+              {approvalsError ? (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
+                  {approvalsError}
+                </div>
+              ) : isApprovalsLoading ? (
+                <p className="text-sm text-slate-500">Loading approvals…</p>
+              ) : taskApprovals.length === 0 ? (
+                <p className="text-sm text-slate-500">
+                  No approvals tied to this task.{" "}
+                  {pendingApprovals.length > 0
+                    ? `${pendingApprovals.length} pending on this board.`
+                    : "No pending approvals on this board."}
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {taskApprovals.map((approval) => (
+                    <div
+                      key={approval.id}
+                      className="rounded-xl border border-slate-200 bg-white p-3"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2 text-xs text-slate-500">
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                            {approval.action_type.replace(/_/g, " ")}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Requested {formatApprovalTimestamp(approval.created_at)}
+                          </p>
+                        </div>
+                        <span className="text-xs font-semibold text-slate-700">
+                          {approval.confidence}% confidence · {approval.status}
+                        </span>
+                      </div>
+                      {approval.payload ? (
+                        <pre className="mt-2 whitespace-pre-wrap text-xs text-slate-600">
+                          {JSON.stringify(approval.payload, null, 2)}
+                        </pre>
+                      ) : null}
+                      {approval.status === "pending" ? (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <Button
+                            size="sm"
+                            onClick={() =>
+                              handleApprovalDecision(approval.id, "approved")
+                            }
+                            disabled={approvalsUpdatingId === approval.id}
+                          >
+                            Approve
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              handleApprovalDecision(approval.id, "rejected")
+                            }
+                            disabled={approvalsUpdatingId === approval.id}
+                            className="border-slate-300 text-slate-700"
+                          >
+                            Reject
+                          </Button>
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="space-y-3">
               <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
@@ -733,6 +1073,147 @@ export default function BoardDetailPage() {
           </div>
         </div>
       </aside>
+
+      <Dialog open={isApprovalsOpen} onOpenChange={setIsApprovalsOpen}>
+        <DialogContent aria-label="Approvals">
+          <DialogHeader>
+            <DialogTitle>Approvals</DialogTitle>
+            <DialogDescription>
+              Review pending decisions from your lead agent.
+            </DialogDescription>
+          </DialogHeader>
+          {boardId ? <BoardApprovalsPanel boardId={boardId} /> : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <DialogContent aria-label="Edit task">
+          <DialogHeader>
+            <DialogTitle>Edit task</DialogTitle>
+            <DialogDescription>
+              Update task details, priority, status, or assignment.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                Title
+              </label>
+              <Input
+                value={editTitle}
+                onChange={(event) => setEditTitle(event.target.value)}
+                placeholder="Task title"
+                disabled={!selectedTask || isSavingTask}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                Description
+              </label>
+              <Textarea
+                value={editDescription}
+                onChange={(event) => setEditDescription(event.target.value)}
+                placeholder="Task details"
+                className="min-h-[140px]"
+                disabled={!selectedTask || isSavingTask}
+              />
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Status
+                </label>
+                <Select
+                  value={editStatus}
+                  onValueChange={setEditStatus}
+                  disabled={!selectedTask || isSavingTask}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {statusOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Priority
+                </label>
+                <Select
+                  value={editPriority}
+                  onValueChange={setEditPriority}
+                  disabled={!selectedTask || isSavingTask}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select priority" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {priorities.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                Assignee
+              </label>
+              <Select
+                value={editAssigneeId || "unassigned"}
+                onValueChange={(value) =>
+                  setEditAssigneeId(value === "unassigned" ? "" : value)
+                }
+                disabled={!selectedTask || isSavingTask}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Unassigned" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="unassigned">Unassigned</SelectItem>
+                  {assignableAgents.map((agent) => (
+                    <SelectItem key={agent.id} value={agent.id}>
+                      {agent.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {assignableAgents.length === 0 ? (
+                <p className="text-xs text-slate-500">
+                  Add agents to assign tasks.
+                </p>
+              ) : null}
+            </div>
+            {saveTaskError ? (
+              <div className="rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-600">
+                {saveTaskError}
+              </div>
+            ) : null}
+          </div>
+          <DialogFooter className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              onClick={handleTaskReset}
+              disabled={!selectedTask || isSavingTask || !hasTaskChanges}
+            >
+              Reset
+            </Button>
+            <Button
+              onClick={() => handleTaskSave(true)}
+              disabled={!selectedTask || isSavingTask || !hasTaskChanges}
+            >
+              {isSavingTask ? "Saving…" : "Save changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={isDialogOpen}
