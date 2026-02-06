@@ -130,7 +130,9 @@ def _ensure_workspace_file(
 ) -> None:
     if not workspace_path or not name:
         return
-    root = Path(workspace_path)
+    # `gateway.workspace_root` is sometimes configured as `~/.openclaw`.
+    # Expand user here to avoid creating a literal `./~` directory under the backend cwd.
+    root = Path(workspace_path).expanduser()
     path = root / name
     if not overwrite and path.exists():
         return
