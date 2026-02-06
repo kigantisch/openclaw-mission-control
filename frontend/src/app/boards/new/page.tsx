@@ -49,7 +49,7 @@ export default function NewBoardPage() {
     mutation: {
       onSuccess: (result) => {
         if (result.status === 200) {
-          router.push(`/boards/${result.data.id}`);
+          router.push(`/boards/${result.data.id}/edit?onboarding=1`);
         }
       },
       onError: (err) => {

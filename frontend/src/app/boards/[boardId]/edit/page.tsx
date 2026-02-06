@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 
 import { SignInButton, SignedIn, SignedOut, useAuth } from "@clerk/nextjs";
 
@@ -49,6 +49,7 @@ const toDateInput = (value?: string | null) => {
 export default function EditBoardPage() {
   const { isSignedIn } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const params = useParams();
   const boardIdParam = params?.boardId;
   const boardId = Array.isArray(boardIdParam) ? boardIdParam[0] : boardIdParam;
@@ -66,6 +67,27 @@ export default function EditBoardPage() {
   const [error, setError] = useState<string | null>(null);
   const [metricsError, setMetricsError] = useState<string | null>(null);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
+
+  const onboardingParam = searchParams.get("onboarding");
+  const searchParamsString = searchParams.toString();
+  const shouldAutoOpenOnboarding =
+    onboardingParam !== null &&
+    onboardingParam !== "" &&
+    onboardingParam !== "0" &&
+    onboardingParam.toLowerCase() !== "false";
+
+  useEffect(() => {
+    if (!boardId) return;
+    if (!shouldAutoOpenOnboarding) return;
+
+    setIsOnboardingOpen(true);
+
+    // Remove the flag from the URL so refreshes don't constantly reopen it.
+    const nextParams = new URLSearchParams(searchParamsString);
+    nextParams.delete("onboarding");
+    const qs = nextParams.toString();
+    router.replace(qs ? `/boards/${boardId}/edit?${qs}` : `/boards/${boardId}/edit`);
+  }, [boardId, router, searchParamsString, shouldAutoOpenOnboarding]);
 
   const gatewaysQuery = useListGatewaysApiV1GatewaysGet<
     listGatewaysApiV1GatewaysGetResponse,
