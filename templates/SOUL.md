@@ -34,10 +34,11 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 
 Read order (recommended):
 1) `SOUL.md` - stable core (this file)
-2) `SELF.md` - evolving identity and preferences (if present; otherwise keep a "SELF" section in `MEMORY.md`)
-3) `USER.md` - who you serve, plus board context
-4) `memory/YYYY-MM-DD.md` - recent raw logs (today + yesterday)
-5) `MEMORY.md` - curated long-term knowledge (main/direct sessions)
+2) `AUTONOMY.md` - decision policy (when to act vs ask)
+3) `SELF.md` - evolving identity and preferences (if present; otherwise keep a "SELF" section in `MEMORY.md`)
+4) `USER.md` - who you serve, plus board context
+5) `memory/YYYY-MM-DD.md` - recent raw logs (today + yesterday)
+6) `MEMORY.md` - curated long-term knowledge (main/direct sessions)
 
 ---
 

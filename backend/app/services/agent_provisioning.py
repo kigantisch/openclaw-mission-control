@@ -41,6 +41,8 @@ DEFAULT_GATEWAY_FILES = frozenset(
     {
         "AGENTS.md",
         "SOUL.md",
+        "SELF.md",
+        "AUTONOMY.md",
         "TOOLS.md",
         "IDENTITY.md",
         "USER.md",
@@ -50,6 +52,10 @@ DEFAULT_GATEWAY_FILES = frozenset(
         "MEMORY.md",
     }
 )
+
+# These files are intended to evolve within the agent workspace. Provision them if missing,
+# but avoid overwriting existing content during updates.
+PRESERVE_AGENT_EDITABLE_FILES = frozenset({"SELF.md", "AUTONOMY.md"})
 
 HEARTBEAT_LEAD_TEMPLATE = "HEARTBEAT_LEAD.md"
 HEARTBEAT_AGENT_TEMPLATE = "HEARTBEAT_AGENT.md"
@@ -113,6 +119,25 @@ def _workspace_path(agent: Agent, workspace_root: str) -> str:
     # display name (e.g. "Lead Agent").
     key = _agent_key(agent)
     return f"{root}/workspace-{_slugify(key)}"
+
+
+def _ensure_workspace_file(
+    workspace_path: str,
+    name: str,
+    content: str,
+    *,
+    overwrite: bool = False,
+) -> None:
+    if not workspace_path or not name:
+        return
+    root = Path(workspace_path)
+    path = root / name
+    if not overwrite and path.exists():
+        return
+    root.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(f"{path.suffix}.tmp")
+    tmp_path.write_text(content, encoding="utf-8")
+    tmp_path.replace(path)
 
 
 def _build_context(
@@ -484,7 +509,7 @@ async def provision_agent(
 
     context = _build_context(agent, board, gateway, auth_token, user)
     supported = set(await _supported_gateway_files(client_config))
-    supported.add("USER.md")
+    supported.update({"USER.md", "SELF.md", "AUTONOMY.md"})
     existing_files = await _gateway_agent_files_index(agent_id, client_config)
     include_bootstrap = True
     if action == "update" and not force_bootstrap:
@@ -501,9 +526,25 @@ async def provision_agent(
         supported,
         include_bootstrap=include_bootstrap,
     )
+
+    # Ensure editable template files exist locally (best-effort) without overwriting.
+    for name in PRESERVE_AGENT_EDITABLE_FILES:
+        content = rendered.get(name)
+        if not content:
+            continue
+        try:
+            _ensure_workspace_file(workspace_path, name, content, overwrite=False)
+        except OSError:
+            # Local workspace may not be writable/available; fall back to gateway API.
+            pass
     for name, content in rendered.items():
         if content == "":
             continue
+        if name in PRESERVE_AGENT_EDITABLE_FILES:
+            # Never overwrite; only provision if missing.
+            entry = existing_files.get(name)
+            if entry and entry.get("missing") is not True:
+                continue
         try:
             await openclaw_call(
                 "agents.files.set",
@@ -543,7 +584,7 @@ async def provision_main_agent(
 
     context = _build_main_context(agent, gateway, auth_token, user)
     supported = set(await _supported_gateway_files(client_config))
-    supported.add("USER.md")
+    supported.update({"USER.md", "SELF.md", "AUTONOMY.md"})
     existing_files = await _gateway_agent_files_index(agent_id, client_config)
     include_bootstrap = action != "update" or force_bootstrap
     if action == "update" and not force_bootstrap:
@@ -564,6 +605,10 @@ async def provision_main_agent(
     for name, content in rendered.items():
         if content == "":
             continue
+        if name in PRESERVE_AGENT_EDITABLE_FILES:
+            entry = existing_files.get(name)
+            if entry and entry.get("missing") is not True:
+                continue
         try:
             await openclaw_call(
                 "agents.files.set",

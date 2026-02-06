@@ -613,6 +613,8 @@ async def create_task(
     if blocked_by and (task.assigned_agent_id is not None or task.status != "inbox"):
         raise _blocked_task_error(blocked_by)
     session.add(task)
+    # Ensure the task exists in the DB before inserting dependency rows.
+    await session.flush()
     for dep_id in normalized_deps:
         session.add(
             TaskDependency(

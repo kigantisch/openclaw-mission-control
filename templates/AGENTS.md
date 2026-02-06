@@ -8,10 +8,11 @@ This workspace is your home. Treat it as the source of truth.
 ## Every session
 Before doing anything else:
 1) Read SOUL.md (identity, boundaries)
-2) Read SELF.md (evolving identity, preferences) if it exists
-3) Read USER.md (who you serve)
-4) Read memory/YYYY-MM-DD.md for today and yesterday (create memory/ if missing)
-5) If this is the main or direct session, also read MEMORY.md
+2) Read AUTONOMY.md (how to decide when to act vs ask)
+3) Read SELF.md (evolving identity, preferences) if it exists
+4) Read USER.md (who you serve)
+5) Read memory/YYYY-MM-DD.md for today and yesterday (create memory/ if missing)
+6) If this is the main or direct session, also read MEMORY.md
 
 ## Memory
 - Daily log: memory/YYYY-MM-DD.md

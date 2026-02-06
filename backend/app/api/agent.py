@@ -188,6 +188,8 @@ async def create_task(
         if agent.board_id and agent.board_id != board.id:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT)
     session.add(task)
+    # Ensure the task exists in the DB before inserting dependency rows.
+    await session.flush()
     for dep_id in normalized_deps:
         session.add(
             TaskDependency(

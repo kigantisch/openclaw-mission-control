@@ -28,6 +28,7 @@ from app.models.board_memory import BoardMemory
 from app.models.board_onboarding import BoardOnboardingSession
 from app.models.boards import Board
 from app.models.gateways import Gateway
+from app.models.task_dependencies import TaskDependency
 from app.models.task_fingerprints import TaskFingerprint
 from app.models.tasks import Task
 from app.schemas.boards import BoardCreate, BoardRead, BoardUpdate
@@ -228,21 +229,27 @@ async def delete_board(
 
     if task_ids:
         await session.execute(delete(ActivityEvent).where(col(ActivityEvent.task_id).in_(task_ids)))
-        await session.execute(
-            delete(TaskFingerprint).where(col(TaskFingerprint.board_id) == board.id)
-        )
+    await session.execute(delete(TaskDependency).where(col(TaskDependency.board_id) == board.id))
+    await session.execute(delete(TaskFingerprint).where(col(TaskFingerprint.board_id) == board.id))
+
+    # Approvals can reference tasks and agents, so delete before both.
+    await session.execute(delete(Approval).where(col(Approval.board_id) == board.id))
+
+    await session.execute(delete(BoardMemory).where(col(BoardMemory.board_id) == board.id))
+    await session.execute(
+        delete(BoardOnboardingSession).where(col(BoardOnboardingSession.board_id) == board.id)
+    )
+
+    # Tasks reference agents (assigned_agent_id) and have dependents (fingerprints/dependencies), so
+    # delete tasks before agents.
+    await session.execute(delete(Task).where(col(Task.board_id) == board.id))
+
     if agents:
         agent_ids = [agent.id for agent in agents]
         await session.execute(
             delete(ActivityEvent).where(col(ActivityEvent.agent_id).in_(agent_ids))
         )
         await session.execute(delete(Agent).where(col(Agent.id).in_(agent_ids)))
-    await session.execute(delete(Approval).where(col(Approval.board_id) == board.id))
-    await session.execute(delete(BoardMemory).where(col(BoardMemory.board_id) == board.id))
-    await session.execute(
-        delete(BoardOnboardingSession).where(col(BoardOnboardingSession.board_id) == board.id)
-    )
-    await session.execute(delete(Task).where(col(Task.board_id) == board.id))
     await session.delete(board)
     await session.commit()
     return OkResponse()
