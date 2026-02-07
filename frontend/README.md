@@ -157,8 +157,6 @@ Clerk should be **off** unless you set a real `pk_test_...` or `pk_live_...` pub
 
 ### Dev server blocked by origin restrictions
 
-`next.config.ts` sets:
+`next.config.ts` sets `allowedDevOrigins` for dev proxy safety.
 
-- `allowedDevOrigins: ["192.168.1.101"]`
-
-If you’re developing from a different hostname/IP, you may need to update `allowedDevOrigins` (or use `npm run dev` on localhost).
+If you see repeated proxy errors (often `ECONNRESET`), make sure your dev server hostname and browser URL match (e.g. `localhost` vs `127.0.0.1`), and that your origin is included in `allowedDevOrigins`.
