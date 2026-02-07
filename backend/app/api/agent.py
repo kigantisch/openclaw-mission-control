@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from typing import Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlmodel import col, select
+from sqlmodel import SQLModel, col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.api import agents as agents_api
@@ -19,7 +20,7 @@ from app.core.config import settings
 from app.db.pagination import paginate
 from app.db.session import get_session
 from app.integrations.openclaw_gateway import GatewayConfig as GatewayClientConfig
-from app.integrations.openclaw_gateway import OpenClawGatewayError, ensure_session, send_message
+from app.integrations.openclaw_gateway import OpenClawGatewayError, ensure_session, openclaw_call, send_message
 from app.models.activity_events import ActivityEvent
 from app.models.agents import Agent
 from app.models.approvals import Approval
@@ -61,6 +62,26 @@ from app.services.task_dependencies import (
 )
 
 router = APIRouter(prefix="/agent", tags=["agent"])
+
+_AGENT_SESSION_PREFIX = "agent:"
+
+
+def _gateway_agent_id(agent: Agent) -> str:
+    session_key = agent.openclaw_session_id or ""
+    if session_key.startswith(_AGENT_SESSION_PREFIX):
+        parts = session_key.split(":")
+        if len(parts) >= 2 and parts[1]:
+            return parts[1]
+    # Fall back to a stable slug derived from name (matches provisioning behavior).
+    value = agent.name.lower().strip()
+    value = re.sub(r"[^a-z0-9]+", "-", value).strip("-")
+    return value or str(agent.id)
+
+
+class SoulUpdateRequest(SQLModel):
+    content: str
+    source_url: str | None = None
+    reason: str | None = None
 
 
 def _actor(agent_ctx: AgentAuthContext) -> ActorContext:
@@ -490,6 +511,90 @@ async def agent_heartbeat(
         session=session,
         actor=_actor(agent_ctx),
     )
+
+
+@router.get("/boards/{board_id}/agents/{agent_id}/soul", response_model=str)
+async def get_agent_soul(
+    agent_id: str,
+    board: Board = Depends(get_board_or_404),
+    session: AsyncSession = Depends(get_session),
+    agent_ctx: AgentAuthContext = Depends(get_agent_auth_context),
+) -> str:
+    _guard_board_access(agent_ctx, board)
+    if not agent_ctx.agent.is_board_lead and str(agent_ctx.agent.id) != agent_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    target = await session.get(Agent, agent_id)
+    if target is None or (target.board_id and target.board_id != board.id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    config = await _gateway_config(session, board)
+    gateway_id = _gateway_agent_id(target)
+    try:
+        payload = await openclaw_call(
+            "agents.files.get",
+            {"agentId": gateway_id, "name": "SOUL.md"},
+            config=config,
+        )
+    except OpenClawGatewayError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    if isinstance(payload, str):
+        return payload
+    if isinstance(payload, dict):
+        content = payload.get("content")
+        if isinstance(content, str):
+            return content
+        file_obj = payload.get("file")
+        if isinstance(file_obj, dict):
+            nested = file_obj.get("content")
+            if isinstance(nested, str):
+                return nested
+    raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Invalid gateway response")
+
+
+@router.put("/boards/{board_id}/agents/{agent_id}/soul", response_model=OkResponse)
+async def update_agent_soul(
+    agent_id: str,
+    payload: SoulUpdateRequest,
+    board: Board = Depends(get_board_or_404),
+    session: AsyncSession = Depends(get_session),
+    agent_ctx: AgentAuthContext = Depends(get_agent_auth_context),
+) -> OkResponse:
+    _guard_board_access(agent_ctx, board)
+    if not agent_ctx.agent.is_board_lead:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    target = await session.get(Agent, agent_id)
+    if target is None or (target.board_id and target.board_id != board.id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    config = await _gateway_config(session, board)
+    gateway_id = _gateway_agent_id(target)
+    content = payload.content.strip()
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="content is required",
+        )
+    try:
+        await openclaw_call(
+            "agents.files.set",
+            {"agentId": gateway_id, "name": "SOUL.md", "content": content},
+            config=config,
+        )
+    except OpenClawGatewayError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    reason = (payload.reason or "").strip()
+    source_url = (payload.source_url or "").strip()
+    note = f"SOUL.md updated for {target.name}."
+    if reason:
+        note = f"{note} Reason: {reason}"
+    if source_url:
+        note = f"{note} Source: {source_url}"
+    record_activity(
+        session,
+        event_type="agent.soul.updated",
+        message=note,
+        agent_id=agent_ctx.agent.id,
+    )
+    await session.commit()
+    return OkResponse()
 
 
 @router.post(

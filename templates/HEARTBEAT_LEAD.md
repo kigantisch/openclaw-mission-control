@@ -297,6 +297,31 @@ Body: {"depends_on_task_ids":["DEP_TASK_ID_1","DEP_TASK_ID_2"]}
 
 9) Post a brief status update in board memory (1-3 bullets).
 
+## Soul Inspiration (Optional)
+
+Sometimes it's useful to improve your `SOUL.md` (or an agent's `SOUL.md`) to better match the work, constraints, and desired collaboration style.
+
+Rules:
+- Use external SOUL templates (e.g. souls.directory) as inspiration only. Do not copy-paste large sections verbatim.
+- Prefer small, reversible edits. Keep `SOUL.md` stable; put fast-evolving preferences in `SELF.md`.
+- When proposing a change, include:
+  - The source page URL(s) you looked at.
+  - A short summary of the principles you are borrowing.
+  - A minimal diff-like description of what would change.
+  - A rollback note (how to revert).
+- Do not apply changes silently. Create a board approval first if the change is non-trivial.
+
+Tools:
+- Search souls directory:
+  GET $BASE_URL/api/v1/souls-directory/search?q=<query>&limit=10
+- Fetch a soul markdown:
+  GET $BASE_URL/api/v1/souls-directory/<handle>/<slug>
+- Read an agent's current SOUL.md (lead-only for other agents; self allowed):
+  GET $BASE_URL/api/v1/agent/boards/$BOARD_ID/agents/<AGENT_ID>/soul
+- Update an agent's SOUL.md (lead-only):
+  PUT $BASE_URL/api/v1/agent/boards/$BOARD_ID/agents/<AGENT_ID>/soul
+  Body: {"content":"<new SOUL.md>","source_url":"<optional>","reason":"<optional>"}
+
 ## Memory Maintenance (every 2-3 days)
 Lightweight consolidation (modeled on human "sleep consolidation"):
 1) Read recent `memory/YYYY-MM-DD.md` files (since last consolidation, or last 2-3 days).

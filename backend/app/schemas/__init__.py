@@ -12,6 +12,11 @@ from app.schemas.board_onboarding import (
 from app.schemas.boards import BoardCreate, BoardRead, BoardUpdate
 from app.schemas.gateways import GatewayCreate, GatewayRead, GatewayUpdate
 from app.schemas.metrics import DashboardMetrics
+from app.schemas.souls_directory import (
+    SoulsDirectoryMarkdownResponse,
+    SoulsDirectorySearchResponse,
+    SoulsDirectorySoulRef,
+)
 from app.schemas.tasks import TaskCreate, TaskRead, TaskUpdate
 from app.schemas.users import UserCreate, UserRead, UserUpdate
 
@@ -38,6 +43,9 @@ __all__ = [
     "GatewayRead",
     "GatewayUpdate",
     "DashboardMetrics",
+    "SoulsDirectoryMarkdownResponse",
+    "SoulsDirectorySearchResponse",
+    "SoulsDirectorySoulRef",
     "TaskCreate",
     "TaskRead",
     "TaskUpdate",
