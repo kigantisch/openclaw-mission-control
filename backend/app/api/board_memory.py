@@ -110,8 +110,8 @@ async def _notify_chat_targets(
     # These are intended to be parsed verbatim by agent runtimes.
     if command in {"/pause", "/resume"}:
         statement = select(Agent).where(col(Agent.board_id) == board.id)
-        targets = list(await session.exec(statement))
-        for agent in targets:
+        pause_targets: list[Agent] = list(await session.exec(statement))
+        for agent in pause_targets:
             if actor.actor_type == "agent" and actor.agent and agent.id == actor.agent.id:
                 continue
             if not agent.openclaw_session_id:
