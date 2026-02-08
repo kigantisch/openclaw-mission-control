@@ -2,7 +2,6 @@
 
 [![CI](https://github.com/abhi1693/openclaw-mission-control/actions/workflows/ci.yml/badge.svg)](https://github.com/abhi1693/openclaw-mission-control/actions/workflows/ci.yml)
 
-
 Web UI + API for operating OpenClaw: managing boards, tasks, agents, approvals, and gateway connections.
 
 ## Active development
@@ -144,6 +143,14 @@ When running Cypress (`cd frontend && npm run e2e`), make sure `NEXT_PUBLIC_API_
 ## Common commands
 
 - Testing notes: [`docs/testing/README.md`](./docs/testing/README.md)
+
+### CI test suites (canonical commands)
+
+CI (`.github/workflows/ci.yml`) runs these suites on PRs:
+
+- **Backend**: `make backend-coverage` (includes `pytest` + coverage artifacts)
+- **Frontend**: `make frontend-test` (Vitest + coverage)
+- **E2E (Cypress)**: runs only when a `cypress.config.*` is present in the repo (job `e2e`).
 
 ### Coverage policy
 

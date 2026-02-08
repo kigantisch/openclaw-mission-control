@@ -85,6 +85,8 @@ jobs:
             frontend/coverage/**
 
   e2e:
+    # Run only when a Cypress suite exists in the repo.
+    if: ${{ hashFiles('**/cypress.config.*') != '' }}
     runs-on: ubuntu-latest
     needs: [check]
 
@@ -136,7 +138,7 @@ jobs:
           npm run e2e -- --browser chrome
 
       - name: Upload Cypress artifacts
-        if: always()
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: cypress-artifacts
