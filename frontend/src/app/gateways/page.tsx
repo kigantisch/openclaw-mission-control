@@ -135,15 +135,6 @@ export default function GatewaysPage() {
         ),
       },
       {
-        accessorKey: "main_session_key",
-        header: "Main session",
-        cell: ({ row }) => (
-          <span className="text-sm text-slate-700">
-            {truncate(row.original.main_session_key, 24)}
-          </span>
-        ),
-      },
-      {
         accessorKey: "workspace_root",
         header: "Workspace root",
         cell: ({ row }) => (

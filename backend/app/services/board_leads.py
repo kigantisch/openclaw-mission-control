@@ -78,6 +78,9 @@ async def ensure_board_lead_agent(
         if existing.name != desired_name:
             existing.name = desired_name
             changed = True
+        if existing.gateway_id != request.gateway.id:
+            existing.gateway_id = request.gateway.id
+            changed = True
         desired_session_key = lead_session_key(board)
         if not existing.openclaw_session_id:
             existing.openclaw_session_id = desired_session_key
@@ -107,6 +110,7 @@ async def ensure_board_lead_agent(
         name=config_options.agent_name or lead_agent_name(board),
         status="provisioning",
         board_id=board.id,
+        gateway_id=request.gateway.id,
         is_board_lead=True,
         heartbeat_config=DEFAULT_HEARTBEAT_CONFIG.copy(),
         identity_profile=merged_identity_profile,

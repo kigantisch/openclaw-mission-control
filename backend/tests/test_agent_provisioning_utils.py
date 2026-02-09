@@ -27,19 +27,6 @@ def test_slugify_falls_back_to_uuid_hex(monkeypatch):
     assert agent_provisioning._slugify("!!!") == "deadbeef"
 
 
-def test_agent_id_from_session_key_parses_agent_prefix():
-    assert agent_provisioning._agent_id_from_session_key(None) is None
-    assert agent_provisioning._agent_id_from_session_key("") is None
-    assert agent_provisioning._agent_id_from_session_key("not-agent") is None
-    assert agent_provisioning._agent_id_from_session_key("agent:") is None
-    assert agent_provisioning._agent_id_from_session_key("agent:riya:main") == "riya"
-
-
-def test_agent_id_from_session_key_ignores_gateway_main_session_key():
-    session_key = gateway_agent_session_key_for_id(uuid4())
-    assert agent_provisioning._agent_id_from_session_key(session_key) is None
-
-
 def test_extract_agent_id_supports_lists_and_dicts():
     assert agent_provisioning._extract_agent_id(["", "  ", "abc"]) == "abc"
     assert agent_provisioning._extract_agent_id([{"agent_id": "xyz"}]) == "xyz"
@@ -89,7 +76,6 @@ class _GatewayStub:
     url: str
     token: str | None
     workspace_root: str
-    main_session_key: str
 
 
 @pytest.mark.asyncio
@@ -102,41 +88,56 @@ async def test_provision_main_agent_uses_dedicated_openclaw_agent_id(monkeypatch
         url="ws://gateway.example/ws",
         token=None,
         workspace_root="/tmp/openclaw",
-        main_session_key=session_key,
     )
     agent = _AgentStub(name="Acme Gateway Agent", openclaw_session_id=session_key)
     captured: dict[str, object] = {}
 
-    async def _fake_ensure_session(*args, **kwargs):
+    async def _fake_ensure_agent_session(self, session_key, *, label=None):
         return None
 
-    async def _fake_patch_gateway_agent_list(agent_id, workspace_path, heartbeat, config):
-        captured["patched_agent_id"] = agent_id
-        captured["workspace_path"] = workspace_path
+    async def _fake_upsert_agent(self, registration):
+        captured["patched_agent_id"] = registration.agent_id
+        captured["workspace_path"] = registration.workspace_path
 
-    async def _fake_supported_gateway_files(config):
+    async def _fake_list_supported_files(self):
         return set()
 
-    async def _fake_gateway_agent_files_index(agent_id, config):
+    async def _fake_list_agent_files(self, agent_id):
         captured["files_index_agent_id"] = agent_id
         return {}
 
     def _fake_render_agent_files(*args, **kwargs):
         return {}
 
-    async def _fake_set_agent_files(*args, **kwargs):
+    async def _fake_set_agent_files(self, **kwargs):
         return None
 
-    monkeypatch.setattr(agent_provisioning, "ensure_session", _fake_ensure_session)
-    monkeypatch.setattr(agent_provisioning, "_patch_gateway_agent_list", _fake_patch_gateway_agent_list)
-    monkeypatch.setattr(agent_provisioning, "_supported_gateway_files", _fake_supported_gateway_files)
     monkeypatch.setattr(
-        agent_provisioning,
-        "_gateway_agent_files_index",
-        _fake_gateway_agent_files_index,
+        agent_provisioning.OpenClawGatewayControlPlane,
+        "ensure_agent_session",
+        _fake_ensure_agent_session,
+    )
+    monkeypatch.setattr(
+        agent_provisioning.OpenClawGatewayControlPlane,
+        "upsert_agent",
+        _fake_upsert_agent,
+    )
+    monkeypatch.setattr(
+        agent_provisioning.OpenClawGatewayControlPlane,
+        "list_supported_files",
+        _fake_list_supported_files,
+    )
+    monkeypatch.setattr(
+        agent_provisioning.OpenClawGatewayControlPlane,
+        "list_agent_files",
+        _fake_list_agent_files,
     )
     monkeypatch.setattr(agent_provisioning, "_render_agent_files", _fake_render_agent_files)
-    monkeypatch.setattr(agent_provisioning, "_set_agent_files", _fake_set_agent_files)
+    monkeypatch.setattr(
+        agent_provisioning.BaseAgentLifecycleManager,
+        "_set_agent_files",
+        _fake_set_agent_files,
+    )
 
     await agent_provisioning.provision_main_agent(
         agent,

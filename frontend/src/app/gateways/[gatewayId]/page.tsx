@@ -180,14 +180,6 @@ export default function GatewayDetailPage() {
               <div className="mt-4 space-y-3 text-sm text-slate-700">
                 <div>
                   <p className="text-xs uppercase text-slate-400">
-                    Main session key
-                  </p>
-                  <p className="mt-1 text-sm font-medium text-slate-900">
-                    {gateway.main_session_key}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs uppercase text-slate-400">
                     Workspace root
                   </p>
                   <p className="mt-1 text-sm font-medium text-slate-900">

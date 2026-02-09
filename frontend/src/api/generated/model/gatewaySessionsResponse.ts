@@ -10,6 +10,5 @@
  */
 export interface GatewaySessionsResponse {
   sessions: unknown[];
-  main_session_key?: string | null;
   main_session?: unknown | null;
 }

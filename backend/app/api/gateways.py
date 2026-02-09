@@ -45,7 +45,6 @@ from app.services.agent_provisioning import (
 )
 from app.services.gateway_agents import (
     gateway_agent_session_key,
-    gateway_agent_session_key_for_id,
     gateway_openclaw_agent_id,
 )
 from app.services.template_sync import GatewayTemplateSyncOptions
@@ -134,68 +133,27 @@ async def _require_gateway(
 async def _find_main_agent(
     session: AsyncSession,
     gateway: Gateway,
-    previous_name: str | None = None,
-    previous_session_key: str | None = None,
 ) -> Agent | None:
-    preferred_session_key = gateway_agent_session_key(gateway)
-    if preferred_session_key:
-        agent = await Agent.objects.filter_by(
-            openclaw_session_id=preferred_session_key,
-        ).first(
-            session,
-        )
-        if agent:
-            return agent
-    if gateway.main_session_key:
-        agent = await Agent.objects.filter_by(
-            openclaw_session_id=gateway.main_session_key,
-        ).first(
-            session,
-        )
-        if agent:
-            return agent
-    if previous_session_key:
-        agent = await Agent.objects.filter_by(
-            openclaw_session_id=previous_session_key,
-        ).first(
-            session,
-        )
-        if agent:
-            return agent
-    names = {_main_agent_name(gateway)}
-    if previous_name:
-        names.add(f"{previous_name} Main")
-    for name in names:
-        agent = await Agent.objects.filter_by(name=name).first(session)
-        if agent:
-            return agent
-    return None
+    return (
+        await Agent.objects.filter_by(gateway_id=gateway.id)
+        .filter(col(Agent.board_id).is_(None))
+        .first(session)
+    )
 
 
 async def _upsert_main_agent_record(
     session: AsyncSession,
     gateway: Gateway,
-    *,
-    previous: tuple[str | None, str | None] | None = None,
 ) -> tuple[Agent, bool]:
     changed = False
     session_key = gateway_agent_session_key(gateway)
-    if gateway.main_session_key != session_key:
-        gateway.main_session_key = session_key
-        gateway.updated_at = utcnow()
-        session.add(gateway)
-        changed = True
-    agent = await _find_main_agent(
-        session,
-        gateway,
-        previous_name=previous[0] if previous else None,
-        previous_session_key=previous[1] if previous else None,
-    )
+    agent = await _find_main_agent(session, gateway)
     if agent is None:
         agent = Agent(
             name=_main_agent_name(gateway),
             status="provisioning",
             board_id=None,
+            gateway_id=gateway.id,
             is_board_lead=False,
             openclaw_session_id=session_key,
             heartbeat_config=DEFAULT_HEARTBEAT_CONFIG.copy(),
@@ -205,6 +163,9 @@ async def _upsert_main_agent_record(
         changed = True
     if agent.board_id is not None:
         agent.board_id = None
+        changed = True
+    if agent.gateway_id != gateway.id:
+        agent.gateway_id = gateway.id
         changed = True
     if agent.is_board_lead:
         agent.is_board_lead = False
@@ -262,21 +223,15 @@ def _extract_agent_id_from_entry(item: object) -> str | None:
     return None
 
 
-def _extract_config_agents_list(payload: object) -> list[object]:
+def _extract_agents_list(payload: object) -> list[object]:
+    if isinstance(payload, list):
+        return [item for item in payload]
     if not isinstance(payload, dict):
         return []
-    data = payload.get("config") or payload.get("parsed") or {}
-    if not isinstance(data, dict):
+    agents = payload.get("agents") or []
+    if not isinstance(agents, list):
         return []
-    agents = data.get("agents") or {}
-    if isinstance(agents, list):
-        return [item for item in agents]
-    if not isinstance(agents, dict):
-        return []
-    agents_list = agents.get("list") or []
-    if not isinstance(agents_list, list):
-        return []
-    return [item for item in agents_list]
+    return [item for item in agents]
 
 
 async def _gateway_has_main_agent_entry(gateway: Gateway) -> bool:
@@ -285,11 +240,11 @@ async def _gateway_has_main_agent_entry(gateway: Gateway) -> bool:
     config = GatewayClientConfig(url=gateway.url, token=gateway.token)
     target_id = gateway_openclaw_agent_id(gateway)
     try:
-        payload = await openclaw_call("config.get", config=config)
+        payload = await openclaw_call("agents.list", config=config)
     except OpenClawGatewayError:
         # Avoid treating transient gateway connectivity issues as a missing agent entry.
         return True
-    for item in _extract_config_agents_list(payload):
+    for item in _extract_agents_list(payload):
         if _extract_agent_id_from_entry(item) == target_id:
             return True
     return False
@@ -376,14 +331,9 @@ async def _ensure_main_agent(
     gateway: Gateway,
     auth: AuthContext,
     *,
-    previous: tuple[str | None, str | None] | None = None,
     action: str = "provision",
 ) -> Agent:
-    agent, _ = await _upsert_main_agent_record(
-        session,
-        gateway,
-        previous=previous,
-    )
+    agent, _ = await _upsert_main_agent_record(session, gateway)
     return await _provision_main_agent_record(
         session,
         gateway,
@@ -464,7 +414,6 @@ async def create_gateway(
     gateway_id = uuid4()
     data["id"] = gateway_id
     data["organization_id"] = ctx.organization.id
-    data["main_session_key"] = gateway_agent_session_key_for_id(gateway_id)
     gateway = await crud.create(session, Gateway, **data)
     await _ensure_main_agent(session, gateway, auth, action="provision")
     return gateway
@@ -500,15 +449,12 @@ async def update_gateway(
         gateway_id=gateway_id,
         organization_id=ctx.organization.id,
     )
-    previous_name = gateway.name
-    previous_session_key = gateway.main_session_key
     updates = payload.model_dump(exclude_unset=True)
     await crud.patch(session, gateway, updates)
     await _ensure_main_agent(
         session,
         gateway,
         auth,
-        previous=(previous_name, previous_session_key),
         action="update",
     )
     return gateway
@@ -555,14 +501,14 @@ async def delete_gateway(
         gateway_id=gateway_id,
         organization_id=ctx.organization.id,
     )
-    gateway_session_key = gateway_agent_session_key(gateway)
     main_agent = await _find_main_agent(session, gateway)
     if main_agent is not None:
         await _clear_agent_foreign_keys(session, agent_id=main_agent.id)
         await session.delete(main_agent)
 
     duplicate_main_agents = await Agent.objects.filter_by(
-        openclaw_session_id=gateway_session_key,
+        gateway_id=gateway.id,
+        board_id=None,
     ).all(session)
     for agent in duplicate_main_agents:
         if main_agent is not None and agent.id == main_agent.id:

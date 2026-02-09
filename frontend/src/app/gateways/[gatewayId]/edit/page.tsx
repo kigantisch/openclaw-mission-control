@@ -82,7 +82,6 @@ export default function EditGatewayPage() {
   const resolvedName = name ?? loadedGateway?.name ?? "";
   const resolvedGatewayUrl = gatewayUrl ?? loadedGateway?.url ?? "";
   const resolvedGatewayToken = gatewayToken ?? loadedGateway?.token ?? "";
-  const resolvedMainSessionKey = loadedGateway?.main_session_key ?? null;
   const resolvedWorkspaceRoot =
     workspaceRoot ?? loadedGateway?.workspace_root ?? DEFAULT_WORKSPACE_ROOT;
 
@@ -165,7 +164,6 @@ export default function EditGatewayPage() {
         name={resolvedName}
         gatewayUrl={resolvedGatewayUrl}
         gatewayToken={resolvedGatewayToken}
-        mainSessionKey={resolvedMainSessionKey}
         workspaceRoot={resolvedWorkspaceRoot}
         gatewayUrlError={gatewayUrlError}
         gatewayCheckStatus={gatewayCheckStatus}

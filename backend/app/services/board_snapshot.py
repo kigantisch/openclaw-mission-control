@@ -12,14 +12,12 @@ from app.core.time import utcnow
 from app.models.agents import Agent
 from app.models.approvals import Approval
 from app.models.board_memory import BoardMemory
-from app.models.gateways import Gateway
 from app.models.tasks import Task
 from app.schemas.agents import AgentRead
 from app.schemas.approvals import ApprovalRead
 from app.schemas.board_memory import BoardMemoryRead
 from app.schemas.boards import BoardRead
 from app.schemas.view_models import BoardSnapshot, TaskCardRead
-from app.services.gateway_agents import gateway_agent_session_key
 from app.services.task_dependencies import (
     blocked_by_dependency_ids,
     dependency_ids_by_task_id,
@@ -47,17 +45,10 @@ def _computed_agent_status(agent: Agent) -> str:
     return agent.status
 
 
-async def _gateway_main_session_keys(session: AsyncSession) -> set[str]:
-    gateways = await Gateway.objects.all().all(session)
-    return {gateway_agent_session_key(gateway) for gateway in gateways}
-
-
-def _agent_to_read(agent: Agent, main_session_keys: set[str]) -> AgentRead:
+def _agent_to_read(agent: Agent) -> AgentRead:
     model = AgentRead.model_validate(agent, from_attributes=True)
     computed_status = _computed_agent_status(agent)
-    is_gateway_main = bool(
-        agent.openclaw_session_id and agent.openclaw_session_id in main_session_keys,
-    )
+    is_gateway_main = agent.gateway_id is not None and agent.board_id is None
     return model.model_copy(
         update={
             "status": computed_status,
@@ -129,13 +120,12 @@ async def build_board_snapshot(session: AsyncSession, board: Board) -> BoardSnap
         dependency_ids=list({*all_dependency_ids}),
     )
 
-    main_session_keys = await _gateway_main_session_keys(session)
     agents = (
         await Agent.objects.filter_by(board_id=board.id)
         .order_by(col(Agent.created_at).desc())
         .all(session)
     )
-    agent_reads = [_agent_to_read(agent, main_session_keys) for agent in agents]
+    agent_reads = [_agent_to_read(agent) for agent in agents]
     agent_name_by_id = {agent.id: agent.name for agent in agents}
 
     pending_approvals_count = int(

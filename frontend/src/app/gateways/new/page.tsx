@@ -125,7 +125,6 @@ export default function NewGatewayPage() {
         name={name}
         gatewayUrl={gatewayUrl}
         gatewayToken={gatewayToken}
-        mainSessionKey={null}
         workspaceRoot={workspaceRoot}
         gatewayUrlError={gatewayUrlError}
         gatewayCheckStatus={gatewayCheckStatus}

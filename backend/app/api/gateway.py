@@ -6,6 +6,7 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlmodel import col
 
 from app.api.deps import require_org_admin
 from app.core.auth import AuthContext, get_auth_context
@@ -23,6 +24,7 @@ from app.integrations.openclaw_gateway_protocol import (
     GATEWAY_METHODS,
     PROTOCOL_VERSION,
 )
+from app.models.agents import Agent
 from app.models.boards import Board
 from app.models.gateways import Gateway
 from app.schemas.common import OkResponse
@@ -35,7 +37,6 @@ from app.schemas.gateway_api import (
     GatewaySessionsResponse,
     GatewaysStatusResponse,
 )
-from app.services.gateway_agents import gateway_agent_session_key
 from app.services.organizations import OrganizationContext, require_board_access
 
 if TYPE_CHECKING:
@@ -120,10 +121,16 @@ async def _resolve_gateway(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Gateway url is required",
         )
+    main_agent = (
+        await Agent.objects.filter_by(gateway_id=gateway.id)
+        .filter(col(Agent.board_id).is_(None))
+        .first(session)
+    )
+    main_session = main_agent.openclaw_session_id if main_agent else None
     return (
         board,
         GatewayClientConfig(url=gateway.url, token=gateway.token),
-        gateway_agent_session_key(gateway),
+        main_session,
     )
 
 
@@ -186,7 +193,6 @@ async def gateways_status(
             gateway_url=config.url,
             sessions_count=len(sessions_list),
             sessions=sessions_list,
-            main_session_key=main_session,
             main_session=main_session_entry,
             main_session_error=main_session_error,
         )
@@ -241,7 +247,6 @@ async def list_gateway_sessions(
 
     return GatewaySessionsResponse(
         sessions=sessions_list,
-        main_session_key=main_session,
         main_session=main_session_entry,
     )
 

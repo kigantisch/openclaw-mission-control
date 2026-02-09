@@ -339,8 +339,7 @@ async def agent_onboarding_update(
         gateway = await Gateway.objects.by_id(board.gateway_id).first(session)
         if (
             gateway
-            and agent.openclaw_session_id
-            and agent.openclaw_session_id != gateway_agent_session_key(gateway)
+            and (agent.gateway_id != gateway.id or agent.board_id is not None)
         ):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
 

@@ -13,7 +13,6 @@ export interface GatewaysStatusResponse {
   gateway_url: string;
   sessions_count?: number | null;
   sessions?: unknown[] | null;
-  main_session_key?: string | null;
   main_session?: unknown | null;
   main_session_error?: string | null;
   error?: string | null;

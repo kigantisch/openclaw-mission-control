@@ -29,17 +29,3 @@ def gateway_openclaw_agent_id_for_id(gateway_id: UUID) -> str:
 def gateway_openclaw_agent_id(gateway: Gateway) -> str:
     """Return the dedicated OpenClaw config `agentId` for a gateway agent."""
     return gateway_openclaw_agent_id_for_id(gateway.id)
-
-
-def parse_gateway_agent_session_key(session_key: str | None) -> UUID | None:
-    """Parse a gateway id from a dedicated gateway-agent session key."""
-    value = (session_key or "").strip()
-    if not (value.startswith(_GATEWAY_AGENT_PREFIX) and value.endswith(_GATEWAY_AGENT_SUFFIX)):
-        return None
-    gateway_id = value[len(_GATEWAY_AGENT_PREFIX) : -len(_GATEWAY_AGENT_SUFFIX)]
-    if not gateway_id:
-        return None
-    try:
-        return UUID(gateway_id)
-    except ValueError:
-        return None

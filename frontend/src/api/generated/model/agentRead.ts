@@ -20,6 +20,7 @@ export interface AgentRead {
   identity_template?: string | null;
   soul_template?: string | null;
   id: string;
+  gateway_id: string;
   is_board_lead?: boolean;
   is_gateway_main?: boolean;
   openclaw_session_id?: string | null;

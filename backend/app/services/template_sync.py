@@ -34,7 +34,6 @@ from app.services.agent_provisioning import (
 from app.services.gateway_agents import (
     gateway_agent_session_key,
     gateway_openclaw_agent_id,
-    parse_gateway_agent_session_key,
 )
 
 _TOOLS_KV_RE = re.compile(r"^(?P<key>[A-Z0-9_]+)=(?P<value>.*)$")
@@ -179,54 +178,6 @@ async def _with_gateway_retry(
     return await backoff.run(fn)
 
 
-def _agent_id_from_session_key(session_key: str | None) -> str | None:
-    value = (session_key or "").strip()
-    if not value:
-        return None
-    # Dedicated Mission Control gateway-agent session keys are not gateway config agent ids.
-    if parse_gateway_agent_session_key(value) is not None:
-        return None
-    if not value.startswith("agent:"):
-        return None
-    parts = value.split(":")
-    if len(parts) < SESSION_KEY_PARTS_MIN:
-        return None
-    agent_id = parts[1].strip()
-    return agent_id or None
-
-
-def _extract_agent_id_from_list(items: object) -> str | None:
-    if not isinstance(items, list):
-        return None
-    for item in items:
-        if isinstance(item, str) and item.strip():
-            return item.strip()
-        if not isinstance(item, dict):
-            continue
-        for key in ("id", "agentId", "agent_id"):
-            raw = item.get(key)
-            if isinstance(raw, str) and raw.strip():
-                return raw.strip()
-    return None
-
-
-def _extract_agent_id(payload: object) -> str | None:
-    """Extract a default gateway agent id from common list payload shapes."""
-    if isinstance(payload, list):
-        return _extract_agent_id_from_list(payload)
-    if not isinstance(payload, dict):
-        return None
-    for key in ("defaultId", "default_id", "defaultAgentId", "default_agent_id"):
-        raw = payload.get(key)
-        if isinstance(raw, str) and raw.strip():
-            return raw.strip()
-    for key in ("agents", "items", "list", "data"):
-        agent_id = _extract_agent_id_from_list(payload.get(key))
-        if agent_id:
-            return agent_id
-    return None
-
-
 def _gateway_agent_id(agent: Agent) -> str:
     session_key = agent.openclaw_session_id or ""
     if session_key.startswith("agent:"):
@@ -302,27 +253,6 @@ async def _get_existing_auth_token(
         return None
     token = token.strip()
     return token or None
-
-
-async def _gateway_default_agent_id(
-    config: GatewayClientConfig,
-    *,
-    fallback_session_key: str | None = None,
-    backoff: _GatewayBackoff | None = None,
-) -> str | None:
-    try:
-
-        async def _do_list() -> object:
-            return await openclaw_call("agents.list", config=config)
-
-        payload = await (backoff.run(_do_list) if backoff else _do_list())
-        agent_id = _extract_agent_id(payload)
-        if agent_id:
-            return agent_id
-    except OpenClawGatewayError:
-        pass
-    # Avoid falling back to dedicated gateway session keys, which are not agent ids.
-    return _agent_id_from_session_key(fallback_session_key)
 
 
 async def _paused_board_ids(session: AsyncSession, board_ids: list[UUID]) -> set[UUID]:
@@ -532,7 +462,8 @@ async def _sync_main_agent(
     main_session_key = gateway_agent_session_key(ctx.gateway)
     main_agent = (
         await Agent.objects.all()
-        .filter(col(Agent.openclaw_session_id) == main_session_key)
+        .filter(col(Agent.gateway_id) == ctx.gateway.id)
+        .filter(col(Agent.board_id).is_(None))
         .first(ctx.session)
     )
     if main_agent is None:

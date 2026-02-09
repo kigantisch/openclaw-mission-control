@@ -57,7 +57,7 @@ from app.schemas.pagination import DefaultLimitOffsetPage
 from app.schemas.tasks import TaskCommentCreate, TaskCommentRead, TaskCreate, TaskRead, TaskUpdate
 from app.services.activity_log import record_activity
 from app.services.board_leads import LeadAgentOptions, LeadAgentRequest, ensure_board_lead_agent
-from app.services.gateway_agents import gateway_agent_session_key, parse_gateway_agent_session_key
+from app.services.gateway_agents import gateway_agent_session_key
 from app.services.task_dependencies import (
     blocked_by_dependency_ids,
     dependency_status_by_id,
@@ -172,25 +172,19 @@ async def _require_gateway_main(
     session: AsyncSession,
     agent: Agent,
 ) -> tuple[Gateway, GatewayClientConfig]:
-    session_key = (agent.openclaw_session_id or "").strip()
-    if not session_key:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Agent missing session key",
-        )
-    gateway_id = parse_gateway_agent_session_key(session_key)
-    if gateway_id is None:
+    if agent.board_id is not None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the dedicated gateway agent may call this endpoint.",
         )
+    gateway_id = agent.gateway_id
     gateway = await Gateway.objects.by_id(gateway_id).first(session)
     if gateway is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the dedicated gateway agent may call this endpoint.",
         )
-    if gateway_agent_session_key(gateway) != session_key:
+    if agent.openclaw_session_id != gateway_agent_session_key(gateway):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the dedicated gateway agent may call this endpoint.",
@@ -257,7 +251,6 @@ async def list_agents(
         statement = statement.where(Agent.board_id == agent_ctx.agent.board_id)
     elif board_id:
         statement = statement.where(Agent.board_id == board_id)
-    main_session_keys = await agents_api.get_gateway_main_session_keys(session)
     statement = statement.order_by(col(Agent.created_at).desc())
 
     def _transform(items: Sequence[Any]) -> Sequence[Any]:
@@ -265,7 +258,6 @@ async def list_agents(
         return [
             agents_api.to_agent_read(
                 agents_api.with_computed_status(agent),
-                main_session_keys,
             )
             for agent in agents
         ]
@@ -758,11 +750,6 @@ async def ask_user_via_gateway_main(
             detail="Gateway is not configured for this board",
         )
     main_session_key = gateway_agent_session_key(gateway)
-    if not main_session_key:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Gateway agent session key is required",
-        )
     config = GatewayClientConfig(url=gateway.url, token=gateway.token)
 
     correlation = payload.correlation_id.strip() if payload.correlation_id else ""
@@ -818,7 +805,8 @@ async def ask_user_via_gateway_main(
     )
 
     main_agent = await Agent.objects.filter_by(
-        openclaw_session_id=main_session_key,
+        gateway_id=gateway.id,
+        board_id=None,
     ).first(session)
 
     await session.commit()

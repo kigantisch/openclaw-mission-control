@@ -201,32 +201,20 @@ def _gateway_client_config(gateway: Gateway) -> GatewayClientConfig:
     return GatewayClientConfig(url=gateway.url, token=gateway.token)
 
 
-async def _get_gateway_main_session_keys(session: AsyncSession) -> set[str]:
-    gateways = await Gateway.objects.all().all(session)
-    return {gateway_agent_session_key(gateway) for gateway in gateways}
+def _is_gateway_main(agent: Agent) -> bool:
+    return agent.board_id is None
 
 
-def _is_gateway_main(agent: Agent, main_session_keys: set[str]) -> bool:
-    return bool(
-        agent.openclaw_session_id and agent.openclaw_session_id in main_session_keys,
-    )
-
-
-def _to_agent_read(agent: Agent, main_session_keys: set[str]) -> AgentRead:
+def _to_agent_read(agent: Agent) -> AgentRead:
     model = AgentRead.model_validate(agent, from_attributes=True)
     return model.model_copy(
-        update={"is_gateway_main": _is_gateway_main(agent, main_session_keys)},
+        update={"is_gateway_main": _is_gateway_main(agent)},
     )
 
 
-async def get_gateway_main_session_keys(session: AsyncSession) -> set[str]:
-    """Return gateway main-session keys used to compute `is_gateway_main`."""
-    return await _get_gateway_main_session_keys(session)
-
-
-def to_agent_read(agent: Agent, main_session_keys: set[str]) -> AgentRead:
+def to_agent_read(agent: Agent) -> AgentRead:
     """Convert an `Agent` model into its API read representation."""
-    return _to_agent_read(agent, main_session_keys)
+    return _to_agent_read(agent)
 
 
 def _coerce_agent_items(items: Sequence[Any]) -> list[Agent]:
@@ -239,17 +227,10 @@ def _coerce_agent_items(items: Sequence[Any]) -> list[Agent]:
     return agents
 
 
-async def _find_gateway_for_main_session(
-    session: AsyncSession,
-    session_key: str | None,
-) -> Gateway | None:
-    if not session_key:
+async def _main_agent_gateway(session: AsyncSession, agent: Agent) -> Gateway | None:
+    if agent.board_id is not None:
         return None
-    gateways = await Gateway.objects.all().all(session)
-    for gateway in gateways:
-        if gateway_agent_session_key(gateway) == session_key:
-            return gateway
-    return None
+    return await Gateway.objects.by_id(agent.gateway_id).first(session)
 
 
 async def _ensure_gateway_session(
@@ -281,8 +262,8 @@ def with_computed_status(agent: Agent) -> Agent:
     return _with_computed_status(agent)
 
 
-def _serialize_agent(agent: Agent, main_session_keys: set[str]) -> dict[str, object]:
-    return _to_agent_read(_with_computed_status(agent), main_session_keys).model_dump(
+def _serialize_agent(agent: Agent) -> dict[str, object]:
+    return _to_agent_read(_with_computed_status(agent)).model_dump(
         mode="json",
     )
 
@@ -331,10 +312,7 @@ async def _require_agent_access(
     if agent.board_id is None:
         if not is_org_admin(ctx.member):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
-        gateway = await _find_gateway_for_main_session(
-            session,
-            agent.openclaw_session_id,
-        )
+        gateway = await _main_agent_gateway(session, agent)
         if gateway is None or gateway.organization_id != ctx.organization.id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
         return
@@ -593,10 +571,7 @@ async def _apply_agent_update_mutations(
     updates: dict[str, Any],
     make_main: bool | None,
 ) -> tuple[Gateway | None, Gateway | None]:
-    main_gateway = await _find_gateway_for_main_session(
-        session,
-        agent.openclaw_session_id,
-    )
+    main_gateway = await _main_agent_gateway(session, agent)
     gateway_for_main: Gateway | None = None
 
     if make_main:
@@ -604,20 +579,48 @@ async def _apply_agent_update_mutations(
         board_for_main = await _require_board(session, board_source)
         gateway_for_main, _ = await _require_gateway(session, board_for_main)
         updates["board_id"] = None
+        updates["gateway_id"] = gateway_for_main.id
         agent.is_board_lead = False
         agent.openclaw_session_id = gateway_agent_session_key(gateway_for_main)
         main_gateway = gateway_for_main
     elif make_main is not None:
+        if "board_id" not in updates or updates["board_id"] is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="board_id is required when converting a gateway-main agent to board scope",
+            )
+        board = await _require_board(session, updates["board_id"])
+        if board.gateway_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Board gateway_id is required",
+            )
+        updates["gateway_id"] = board.gateway_id
         agent.openclaw_session_id = None
 
-    if not make_main and "board_id" in updates:
-        await _require_board(session, updates["board_id"])
+    if make_main is None and "board_id" in updates:
+        board = await _require_board(session, updates["board_id"])
+        if board.gateway_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Board gateway_id is required",
+            )
+        updates["gateway_id"] = board.gateway_id
     for key, value in updates.items():
         setattr(agent, key, value)
 
     if make_main is None and main_gateway is not None:
         agent.board_id = None
+        agent.gateway_id = main_gateway.id
         agent.is_board_lead = False
+    if make_main is False and agent.board_id is not None:
+        board = await _require_board(session, agent.board_id)
+        if board.gateway_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Board gateway_id is required",
+            )
+        agent.gateway_id = board.gateway_id
     agent.updated_at = utcnow()
     if agent.heartbeat_config is None:
         agent.heartbeat_config = DEFAULT_HEARTBEAT_CONFIG.copy()
@@ -812,6 +815,7 @@ async def _create_agent_from_heartbeat(
     data: dict[str, Any] = {
         "name": payload.name,
         "board_id": board.id,
+        "gateway_id": gateway.id,
         "heartbeat_config": DEFAULT_HEARTBEAT_CONFIG.copy(),
     }
     agent, raw_token, session_error = await _persist_new_agent(
@@ -925,8 +929,7 @@ async def _commit_heartbeat(
     session.add(agent)
     await session.commit()
     await session.refresh(agent)
-    main_session_keys = await _get_gateway_main_session_keys(session)
-    return _to_agent_read(_with_computed_status(agent), main_session_keys)
+    return _to_agent_read(_with_computed_status(agent))
 
 
 async def _send_wakeup_message(
@@ -952,7 +955,6 @@ async def list_agents(
     ctx: OrganizationContext = ORG_ADMIN_DEP,
 ) -> LimitOffsetPage[AgentRead]:
     """List agents visible to the active organization admin."""
-    main_session_keys = await _get_gateway_main_session_keys(session)
     board_ids = await list_accessible_board_ids(session, member=ctx.member, write=False)
     if board_id is not None and board_id not in set(board_ids):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
@@ -963,9 +965,11 @@ async def list_agents(
         gateways = await Gateway.objects.filter_by(
             organization_id=ctx.organization.id,
         ).all(session)
-        gateway_keys = [gateway_agent_session_key(gateway) for gateway in gateways]
-        if gateway_keys:
-            base_filters.append(col(Agent.openclaw_session_id).in_(gateway_keys))
+        gateway_ids = [gateway.id for gateway in gateways]
+        if gateway_ids:
+            base_filters.append(
+                (col(Agent.gateway_id).in_(gateway_ids)) & (col(Agent.board_id).is_(None)),
+            )
     if base_filters:
         if len(base_filters) == 1:
             statement = select(Agent).where(base_filters[0])
@@ -979,19 +983,18 @@ async def list_agents(
         gateway = await Gateway.objects.by_id(gateway_id).first(session)
         if gateway is None or gateway.organization_id != ctx.organization.id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-        gateway_main_key = gateway_agent_session_key(gateway)
         gateway_board_ids = select(Board.id).where(col(Board.gateway_id) == gateway_id)
         statement = statement.where(
             or_(
                 col(Agent.board_id).in_(gateway_board_ids),
-                col(Agent.openclaw_session_id) == gateway_main_key,
+                (col(Agent.gateway_id) == gateway_id) & (col(Agent.board_id).is_(None)),
             ),
         )
     statement = statement.order_by(col(Agent.created_at).desc())
 
     def _transform(items: Sequence[Any]) -> Sequence[Any]:
         agents = _coerce_agent_items(items)
-        return [_to_agent_read(_with_computed_status(agent), main_session_keys) for agent in agents]
+        return [_to_agent_read(_with_computed_status(agent)) for agent in agents]
 
     return await paginate(session, statement, transformer=_transform)
 
@@ -1029,13 +1032,10 @@ async def stream_agents(
                     agents = [agent for agent in agents if agent.board_id in allowed_ids]
                 else:
                     agents = []
-                main_session_keys = (
-                    await _get_gateway_main_session_keys(stream_session) if agents else set()
-                )
             for agent in agents:
                 updated_at = agent.updated_at or agent.last_seen_at or utcnow()
                 last_seen = max(updated_at, last_seen)
-                payload = {"agent": _serialize_agent(agent, main_session_keys)}
+                payload = {"agent": _serialize_agent(agent)}
                 yield {"event": "agent", "data": json.dumps(payload)}
             await asyncio.sleep(2)
 
@@ -1059,6 +1059,7 @@ async def create_agent(
     )
     gateway, client_config = await _require_gateway(session, board)
     data = payload.model_dump()
+    data["gateway_id"] = gateway.id
     requested_name = (data.get("name") or "").strip()
     await _ensure_unique_agent_name(
         session,
@@ -1089,8 +1090,7 @@ async def create_agent(
         request=provision_request,
         client_config=client_config,
     )
-    main_session_keys = await _get_gateway_main_session_keys(session)
-    return _to_agent_read(_with_computed_status(agent), main_session_keys)
+    return _to_agent_read(_with_computed_status(agent))
 
 
 @router.get("/{agent_id}", response_model=AgentRead)
@@ -1104,8 +1104,7 @@ async def get_agent(
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     await _require_agent_access(session, agent=agent, ctx=ctx, write=False)
-    main_session_keys = await _get_gateway_main_session_keys(session)
-    return _to_agent_read(_with_computed_status(agent), main_session_keys)
+    return _to_agent_read(_with_computed_status(agent))
 
 
 @router.patch("/{agent_id}", response_model=AgentRead)
@@ -1129,8 +1128,7 @@ async def update_agent(
         make_main=make_main,
     )
     if not updates and not params.force and make_main is None:
-        main_session_keys = await _get_gateway_main_session_keys(session)
-        return _to_agent_read(_with_computed_status(agent), main_session_keys)
+        return _to_agent_read(_with_computed_status(agent))
     main_gateway, gateway_for_main = await _apply_agent_update_mutations(
         session,
         agent=agent,
@@ -1164,8 +1162,7 @@ async def update_agent(
         agent=agent,
         request=provision_request,
     )
-    main_session_keys = await _get_gateway_main_session_keys(session)
-    return _to_agent_read(_with_computed_status(agent), main_session_keys)
+    return _to_agent_read(_with_computed_status(agent))
 
 
 @router.post("/{agent_id}/heartbeat", response_model=AgentRead)

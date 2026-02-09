@@ -112,6 +112,7 @@ class AgentRead(AgentBase):
     """Public agent representation returned by the API."""
 
     id: UUID
+    gateway_id: UUID
     is_board_lead: bool = False
     is_gateway_main: bool = False
     openclaw_session_id: str | None = None

@@ -30,7 +30,6 @@ class GatewaysStatusResponse(SQLModel):
     gateway_url: str
     sessions_count: int | None = None
     sessions: list[object] | None = None
-    main_session_key: str | None = None
     main_session: object | None = None
     main_session_error: str | None = None
     error: str | None = None
@@ -40,7 +39,6 @@ class GatewaySessionsResponse(SQLModel):
     """Gateway sessions list response payload."""
 
     sessions: list[object]
-    main_session_key: str | None = None
     main_session: object | None = None
 
 
