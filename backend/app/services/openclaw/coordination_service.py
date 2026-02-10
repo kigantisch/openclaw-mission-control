@@ -34,7 +34,8 @@ from app.services.openclaw.exceptions import (
 )
 from app.services.openclaw.gateway_rpc import GatewayConfig as GatewayClientConfig
 from app.services.openclaw.gateway_rpc import OpenClawGatewayError, openclaw_call
-from app.services.openclaw.internal import agent_key, with_coordination_gateway_retry
+from app.services.openclaw.internal.agent_key import agent_key
+from app.services.openclaw.internal.retry import with_coordination_gateway_retry
 from app.services.openclaw.policies import OpenClawAuthorizationPolicy
 from app.services.openclaw.provisioning_db import (
     LeadAgentOptions,

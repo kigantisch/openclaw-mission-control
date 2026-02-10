@@ -7,22 +7,23 @@ from uuid import UUID, uuid4
 
 import pytest
 
+import app.services.openclaw.internal.agent_key as agent_key_mod
 import app.services.openclaw.provisioning as agent_provisioning
 from app.services.openclaw.provisioning_db import AgentLifecycleService
 from app.services.openclaw.shared import GatewayAgentIdentity
 
 
 def test_slugify_normalizes_and_trims():
-    assert agent_provisioning._slugify("Hello, World") == "hello-world"
-    assert agent_provisioning._slugify("  A   B  ") == "a-b"
+    assert agent_provisioning.slugify("Hello, World") == "hello-world"
+    assert agent_provisioning.slugify("  A   B  ") == "a-b"
 
 
 def test_slugify_falls_back_to_uuid_hex(monkeypatch):
     class _FakeUuid:
         hex = "deadbeef"
 
-    monkeypatch.setattr(agent_provisioning, "uuid4", lambda: _FakeUuid())
-    assert agent_provisioning._slugify("!!!") == "deadbeef"
+    monkeypatch.setattr(agent_key_mod, "uuid4", lambda: _FakeUuid())
+    assert agent_provisioning.slugify("!!!") == "deadbeef"
 
 
 @dataclass

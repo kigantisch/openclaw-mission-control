@@ -45,10 +45,7 @@ from app.schemas.common import OkResponse
 from app.schemas.gateways import GatewayTemplatesSyncError, GatewayTemplatesSyncResult
 from app.services.activity_log import record_activity
 from app.services.openclaw.constants import (
-    _NON_TRANSIENT_GATEWAY_ERROR_MARKERS,
-    _SECURE_RANDOM,
     _TOOLS_KV_RE,
-    _TRANSIENT_GATEWAY_ERROR_MARKERS,
     AGENT_SESSION_PREFIX,
     DEFAULT_HEARTBEAT_CONFIG,
     OFFLINE_AFTER,
@@ -59,7 +56,8 @@ from app.services.openclaw.gateway_rpc import (
     ensure_session,
     send_message,
 )
-from app.services.openclaw.internal import agent_key as _agent_key
+from app.services.openclaw.internal.agent_key import agent_key as _agent_key
+from app.services.openclaw.internal.retry import GatewayBackoff
 from app.services.openclaw.policies import OpenClawAuthorizationPolicy
 from app.services.openclaw.provisioning import (
     OpenClawGatewayControlPlane,
@@ -77,7 +75,7 @@ from app.services.organizations import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+    from collections.abc import AsyncIterator, Sequence
 
     from fastapi_pagination.limit_offset import LimitOffsetPage
     from sqlalchemy.sql.elements import ColumnElement
@@ -272,7 +270,7 @@ class OpenClawProvisioningService:
             session=self.session,
             gateway=gateway,
             control_plane=control_plane,
-            backoff=_GatewayBackoff(timeout_s=10 * 60, timeout_context="template sync"),
+            backoff=GatewayBackoff(timeout_s=10 * 60, timeout_context="template sync"),
             options=options,
             provisioner=self._gateway,
         )
@@ -325,108 +323,9 @@ class _SyncContext:
     session: AsyncSession
     gateway: Gateway
     control_plane: OpenClawGatewayControlPlane
-    backoff: _GatewayBackoff
+    backoff: GatewayBackoff
     options: GatewayTemplateSyncOptions
     provisioner: OpenClawGatewayProvisioner
-
-
-def _is_transient_gateway_error(exc: Exception) -> bool:
-    if not isinstance(exc, OpenClawGatewayError):
-        return False
-    message = str(exc).lower()
-    if not message:
-        return False
-    if any(marker in message for marker in _NON_TRANSIENT_GATEWAY_ERROR_MARKERS):
-        return False
-    return ("503" in message and "websocket" in message) or any(
-        marker in message for marker in _TRANSIENT_GATEWAY_ERROR_MARKERS
-    )
-
-
-def _gateway_timeout_message(
-    exc: OpenClawGatewayError,
-    *,
-    timeout_s: float,
-    context: str,
-) -> str:
-    rounded_timeout = int(timeout_s)
-    timeout_text = f"{rounded_timeout} seconds"
-    if rounded_timeout >= 120:
-        timeout_text = f"{rounded_timeout // 60} minutes"
-    return f"Gateway unreachable after {timeout_text} ({context} timeout). Last error: {exc}"
-
-
-class _GatewayBackoff:
-    def __init__(
-        self,
-        *,
-        timeout_s: float = 10 * 60,
-        base_delay_s: float = 0.75,
-        max_delay_s: float = 30.0,
-        jitter: float = 0.2,
-        timeout_context: str = "gateway operation",
-    ) -> None:
-        self._timeout_s = timeout_s
-        self._base_delay_s = base_delay_s
-        self._max_delay_s = max_delay_s
-        self._jitter = jitter
-        self._timeout_context = timeout_context
-        self._delay_s = base_delay_s
-
-    def reset(self) -> None:
-        self._delay_s = self._base_delay_s
-
-    @staticmethod
-    async def _attempt(
-        fn: Callable[[], Awaitable[_T]],
-    ) -> tuple[_T | None, OpenClawGatewayError | None]:
-        try:
-            return await fn(), None
-        except OpenClawGatewayError as exc:
-            return None, exc
-
-    async def run(self, fn: Callable[[], Awaitable[_T]]) -> _T:
-        deadline_s = asyncio.get_running_loop().time() + self._timeout_s
-        while True:
-            value, error = await self._attempt(fn)
-            if error is not None:
-                exc = error
-                if not _is_transient_gateway_error(exc):
-                    raise exc
-                now = asyncio.get_running_loop().time()
-                remaining = deadline_s - now
-                if remaining <= 0:
-                    raise TimeoutError(
-                        _gateway_timeout_message(
-                            exc,
-                            timeout_s=self._timeout_s,
-                            context=self._timeout_context,
-                        ),
-                    ) from exc
-
-                sleep_s = min(self._delay_s, remaining)
-                if self._jitter:
-                    sleep_s *= 1.0 + _SECURE_RANDOM.uniform(
-                        -self._jitter,
-                        self._jitter,
-                    )
-                sleep_s = max(0.0, min(sleep_s, remaining))
-                await asyncio.sleep(sleep_s)
-                self._delay_s = min(self._delay_s * 2.0, self._max_delay_s)
-                continue
-            self.reset()
-            if value is None:
-                msg = "Gateway retry produced no value without an error"
-                raise RuntimeError(msg)
-            return value
-
-
-async def _with_gateway_retry(
-    fn: Callable[[], Awaitable[_T]],
-    *,
-    backoff: _GatewayBackoff,
-) -> _T:
-    return await backoff.run(fn)
 
 
 def _parse_tools_md(content: str) -> dict[str, str]:
@@ -447,7 +346,7 @@ async def _get_agent_file(
     agent_gateway_id: str,
     name: str,
     control_plane: OpenClawGatewayControlPlane,
-    backoff: _GatewayBackoff | None = None,
+    backoff: GatewayBackoff | None = None,
 ) -> str | None:
     try:
 
@@ -475,7 +374,7 @@ async def _get_existing_auth_token(
     *,
     agent_gateway_id: str,
     control_plane: OpenClawGatewayControlPlane,
-    backoff: _GatewayBackoff | None = None,
+    backoff: GatewayBackoff | None = None,
 ) -> str | None:
     tools = await _get_agent_file(
         agent_gateway_id=agent_gateway_id,
@@ -672,7 +571,7 @@ async def _sync_one_agent(
             )
             return True
 
-        await _with_gateway_retry(_do_provision, backoff=ctx.backoff)
+        await ctx.backoff.run(_do_provision)
         result.agents_updated += 1
     except TimeoutError as exc:  # pragma: no cover - gateway/network dependent
         result.agents_skipped += 1
@@ -742,7 +641,7 @@ async def _sync_main_agent(
             )
             return True
 
-        await _with_gateway_retry(_do_provision_main, backoff=ctx.backoff)
+        await ctx.backoff.run(_do_provision_main)
     except TimeoutError as exc:  # pragma: no cover - gateway/network dependent
         _append_sync_error(result, agent=main_agent, message=str(exc))
         stop_sync = True
