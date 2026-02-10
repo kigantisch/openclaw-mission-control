@@ -20,7 +20,7 @@ services:
   backend:
     build:
       # Build from repo root so the backend image can include repo-level assets
-      # like `templates/`.
+      # like `backend/templates/`.
       context: .
       dockerfile: backend/Dockerfile
     env_file:

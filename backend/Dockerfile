@@ -38,9 +38,9 @@ COPY backend/migrations ./migrations
 COPY backend/alembic.ini ./alembic.ini
 COPY backend/app ./app
 
-# Copy repo-level templates used by agent provisioning, etc.
-# (backend code resolves these from repo root)
-COPY templates ./templates
+# Copy provisioning templates.
+# In-repo these live at `backend/templates/`; runtime path is `/app/templates`.
+COPY backend/templates ./templates
 
 # Default API port
 EXPOSE 8000

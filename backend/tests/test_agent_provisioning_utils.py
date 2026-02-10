@@ -81,6 +81,13 @@ def test_agent_lifecycle_workspace_path_preserves_tilde_in_workspace_root():
     )
 
 
+def test_templates_root_points_to_repo_templates_dir():
+    root = agent_provisioning._templates_root()
+    assert root.name == "templates"
+    assert root.parent.name == "backend"
+    assert (root / "AGENTS.md").exists()
+
+
 @dataclass
 class _GatewayStub:
     id: UUID
@@ -164,3 +171,100 @@ async def test_provision_main_agent_uses_dedicated_openclaw_agent_id(monkeypatch
     expected_agent_id = GatewayAgentIdentity.openclaw_agent_id_for_id(gateway_id)
     assert captured["patched_agent_id"] == expected_agent_id
     assert captured["files_index_agent_id"] == expected_agent_id
+
+
+@pytest.mark.asyncio
+async def test_list_supported_files_always_includes_default_gateway_files(monkeypatch):
+    """Provisioning should not depend solely on whatever the gateway's default agent reports."""
+
+    async def _fake_openclaw_call(method, params=None, config=None):
+        _ = config
+        if method == "agents.list":
+            return {"defaultId": "main"}
+        if method == "agents.files.list":
+            assert params == {"agentId": "main"}
+            return {"files": [{"path": "prompts/system.md", "missing": True}]}
+        raise AssertionError(f"Unexpected method: {method}")
+
+    monkeypatch.setattr(agent_provisioning, "openclaw_call", _fake_openclaw_call)
+    cp = agent_provisioning.OpenClawGatewayControlPlane(
+        agent_provisioning.GatewayClientConfig(url="ws://gateway.example/ws", token=None),
+    )
+    supported = await cp.list_supported_files()
+
+    # Newer gateways may surface other file paths, but we still must include our templates.
+    assert "prompts/system.md" in supported
+    for required in agent_provisioning.DEFAULT_GATEWAY_FILES:
+        assert required in supported
+
+
+@pytest.mark.asyncio
+async def test_provision_overwrites_user_md_on_first_provision(monkeypatch):
+    """Gateway may pre-create USER.md; we still want MC's template on first provision."""
+
+    class _ControlPlaneStub:
+        def __init__(self):
+            self.writes: list[tuple[str, str]] = []
+
+        async def ensure_agent_session(self, session_key, *, label=None):
+            return None
+
+        async def reset_agent_session(self, session_key):
+            return None
+
+        async def delete_agent_session(self, session_key):
+            return None
+
+        async def upsert_agent(self, registration):
+            return None
+
+        async def delete_agent(self, agent_id, *, delete_files=True):
+            return None
+
+        async def list_supported_files(self):
+            # Minimal set.
+            return {"USER.md"}
+
+        async def list_agent_files(self, agent_id):
+            # Pretend gateway created USER.md already.
+            return {"USER.md": {"name": "USER.md", "missing": False}}
+
+        async def set_agent_file(self, *, agent_id, name, content):
+            self.writes.append((name, content))
+
+        async def patch_agent_heartbeats(self, entries):
+            return None
+
+    @dataclass
+    class _GatewayTiny:
+        id: UUID
+        name: str
+        url: str
+        token: str | None
+        workspace_root: str
+
+    class _Manager(agent_provisioning.BaseAgentLifecycleManager):
+        def _agent_id(self, agent):
+            return "agent-x"
+
+        def _build_context(self, *, agent, auth_token, user, board):
+            return {}
+
+    gateway = _GatewayTiny(
+        id=uuid4(),
+        name="G",
+        url="ws://x",
+        token=None,
+        workspace_root="/tmp",
+    )
+    cp = _ControlPlaneStub()
+    mgr = _Manager(gateway, cp)  # type: ignore[arg-type]
+
+    # Rendered content is non-empty; action is "provision" so we should overwrite.
+    await mgr._set_agent_files(
+        agent_id="agent-x",
+        rendered={"USER.md": "from-mc"},
+        existing_files={"USER.md": {"name": "USER.md", "missing": False}},
+        action="provision",
+    )
+    assert ("USER.md", "from-mc") in cp.writes

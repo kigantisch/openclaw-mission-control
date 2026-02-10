@@ -544,9 +544,16 @@ class OpenClawGatewayControlPlane(GatewayControlPlane):
             if not isinstance(item, dict):
                 continue
             name = item.get("name")
+            if not isinstance(name, str) or not name:
+                name = item.get("path")
             if isinstance(name, str) and name:
                 supported.add(name)
-        return supported or set(DEFAULT_GATEWAY_FILES)
+
+        # Always include Mission Control's expected template files even if the gateway's default
+        # agent reports a different file set (e.g. `prompts/system.md`). This prevents provisioning
+        # from silently skipping our templates due to gateway-side defaults or version skew.
+        supported.update(DEFAULT_GATEWAY_FILES)
+        return supported
 
     async def list_agent_files(self, agent_id: str) -> dict[str, dict[str, Any]]:
         payload = await openclaw_call(
@@ -564,6 +571,8 @@ class OpenClawGatewayControlPlane(GatewayControlPlane):
             if not isinstance(item, dict):
                 continue
             name = item.get("name")
+            if not isinstance(name, str) or not name:
+                name = item.get("path")
             if isinstance(name, str) and name:
                 index[name] = dict(item)
         return index
@@ -686,11 +695,15 @@ class BaseAgentLifecycleManager(ABC):
         agent_id: str,
         rendered: dict[str, str],
         existing_files: dict[str, dict[str, Any]],
+        action: str,
     ) -> None:
         for name, content in rendered.items():
             if content == "":
                 continue
-            if name in PRESERVE_AGENT_EDITABLE_FILES:
+            # Preserve "editable" files only during updates. During first-time provisioning,
+            # the gateway may pre-create defaults for USER/SELF/etc, and we still want to
+            # apply Mission Control's templates.
+            if action == "update" and name in PRESERVE_AGENT_EDITABLE_FILES:
                 entry = existing_files.get(name)
                 if entry and not bool(entry.get("missing")):
                     continue
@@ -764,6 +777,7 @@ class BaseAgentLifecycleManager(ABC):
             agent_id=agent_id,
             rendered=rendered,
             existing_files=existing_files,
+            action=options.action,
         )
         if options.reset_session:
             await self._control_plane.reset_agent_session(session_key)

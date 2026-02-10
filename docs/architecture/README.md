@@ -81,7 +81,7 @@ There is currently no queue runtime configured in this repo.
 Repo root:
 - `compose.yml` — local/self-host stack
 - `.env.example` — compose/local defaults
-- `templates/` — shared templates
+- `backend/templates/` — shared templates
 
 Backend:
 - `backend/app/api/` — REST routers
