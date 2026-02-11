@@ -55,6 +55,7 @@ jobs:
         env:
           # Keep CI builds deterministic and secretless.
           NEXT_TELEMETRY_DISABLED: "1"
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
         run: |
           make backend-lint
           make backend-typecheck
