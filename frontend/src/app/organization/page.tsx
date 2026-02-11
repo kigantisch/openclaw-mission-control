@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 
 import { SignedIn, SignedOut, useAuth } from "@/auth/clerk";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Building2, Copy, UserPlus, Users } from "lucide-react";
+import { Building2, UserPlus, Users } from "lucide-react";
 
 import { ApiError, customFetch } from "@/api/mutator";
 import {
@@ -38,9 +38,10 @@ import type {
   BoardRead,
   OrganizationBoardAccessSpec,
   OrganizationInviteRead,
-  OrganizationMemberRead,
 } from "@/api/generated/model";
 import { SignedOutPanel } from "@/components/auth/SignedOutPanel";
+import { BoardAccessTable } from "@/components/organization/BoardAccessTable";
+import { MembersInvitesTable } from "@/components/organization/MembersInvitesTable";
 import { DashboardSidebar } from "@/components/organisms/DashboardSidebar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -62,7 +63,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { DashboardShell } from "@/components/templates/DashboardShell";
-import { formatTimestamp } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
 
 type AccessScope = "all" | "custom";
@@ -80,29 +80,7 @@ const buildAccessList = (
       can_write: entry.write,
     }));
 
-const summarizeAccess = (allRead: boolean, allWrite: boolean) => {
-  if (allRead || allWrite) {
-    if (allRead && allWrite) return "All boards: read + write";
-    if (allWrite) return "All boards: write";
-    return "All boards: read";
-  }
-  return "Selected boards";
-};
-
-const roleBadgeVariant = (role: string) => {
-  if (role === "admin" || role === "owner") return "accent" as const;
-  return "outline" as const;
-};
-
 const defaultBoardAccess: BoardAccessState = {};
-
-const initialsFrom = (value?: string | null) => {
-  if (!value) return "?";
-  const parts = value.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
-};
 
 function BoardAccessEditor({
   boards,
@@ -246,56 +224,13 @@ function BoardAccessEditor({
             </div>
           ) : (
             <div className="overflow-hidden rounded-xl border border-slate-200">
-              <table className="min-w-full text-sm">
-                <thead className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500">
-                  <tr>
-                    <th className="px-4 py-2 text-left font-medium">Board</th>
-                    <th className="px-4 py-2 text-center font-medium">Read</th>
-                    <th className="px-4 py-2 text-center font-medium">Write</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {boards.map((board) => {
-                    const entry = access[board.id] ?? {
-                      read: false,
-                      write: false,
-                    };
-                    return (
-                      <tr
-                        key={board.id}
-                        className="border-t border-slate-200 hover:bg-slate-50"
-                      >
-                        <td className="px-4 py-3">
-                          <div className="text-sm font-semibold text-slate-900">
-                            {board.name}
-                          </div>
-                          <div className="text-xs text-slate-500">
-                            {board.slug}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          <input
-                            type="checkbox"
-                            className="h-4 w-4"
-                            checked={entry.read}
-                            onChange={() => handleBoardReadToggle(board.id)}
-                            disabled={disabled}
-                          />
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          <input
-                            type="checkbox"
-                            className="h-4 w-4"
-                            checked={entry.write}
-                            onChange={() => handleBoardWriteToggle(board.id)}
-                            disabled={disabled}
-                          />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+              <BoardAccessTable
+                boards={boards}
+                access={access}
+                onToggleRead={handleBoardReadToggle}
+                onToggleWrite={handleBoardWriteToggle}
+                disabled={disabled}
+              />
             </div>
           )}
         </div>
@@ -756,23 +691,6 @@ export default function OrganizationPage() {
     removeMemberMutation.mutate({ memberId: activeMemberId });
   };
 
-  const memberAccessSummary = (member: OrganizationMemberRead) =>
-    summarizeAccess(member.all_boards_read, member.all_boards_write);
-
-  const memberDisplay = (member: OrganizationMemberRead) => {
-    const primary =
-      member.user?.name ||
-      member.user?.preferred_name ||
-      member.user?.email ||
-      member.user_id;
-    const secondary = member.user?.email ?? "No email on file";
-    return {
-      primary,
-      secondary,
-      initials: initialsFrom(primary),
-    };
-  };
-
   return (
     <DashboardShell>
       <SignedOut>
@@ -874,178 +792,24 @@ export default function OrganizationPage() {
                 </div>
               </div>
               <div className="overflow-x-auto">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500">
-                    <tr>
-                      <th className="px-5 py-3 text-left font-medium">
-                        Member
-                      </th>
-                      <th className="px-5 py-3 text-left font-medium">
-                        Status
-                      </th>
-                      <th className="px-5 py-3 text-left font-medium">
-                        Access
-                      </th>
-                      <th className="px-5 py-3 text-right font-medium">
-                        Actions
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {membersQuery.isLoading ? (
-                      <tr>
-                        <td
-                          colSpan={4}
-                          className="px-5 py-6 text-center text-sm text-slate-500"
-                        >
-                          Loading members...
-                        </td>
-                      </tr>
-                    ) : null}
-
-                    {members.map((member) => {
-                      const display = memberDisplay(member);
-                      return (
-                        <tr
-                          key={member.id}
-                          className="border-t border-slate-200 hover:bg-slate-50"
-                        >
-                          <td className="px-5 py-4">
-                            <div className="flex items-center gap-3">
-                              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-indigo-500 text-xs font-semibold text-white">
-                                {display.initials}
-                              </div>
-                              <div>
-                                <div className="text-sm font-semibold text-slate-900">
-                                  {display.primary}
-                                </div>
-                                <div className="text-xs text-slate-500">
-                                  {display.secondary}
-                                </div>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-5 py-4">
-                            <Badge variant={roleBadgeVariant(member.role)}>
-                              {member.role}
-                            </Badge>
-                          </td>
-                          <td className="px-5 py-4 text-slate-600">
-                            {memberAccessSummary(member)}
-                          </td>
-                          <td className="px-5 py-4 text-right">
-                            {isAdmin ? (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => openAccessDialog(member.id)}
-                              >
-                                Manage access
-                              </Button>
-                            ) : (
-                              <span className="text-xs text-slate-400">
-                                Admin only
-                              </span>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-
-                    {isAdmin && invitesQuery.isLoading ? (
-                      <tr>
-                        <td
-                          colSpan={4}
-                          className="px-5 py-6 text-center text-sm text-slate-500"
-                        >
-                          Loading invites...
-                        </td>
-                      </tr>
-                    ) : null}
-
-                    {isAdmin
-                      ? invites.map((invite) => (
-                          <tr
-                            key={invite.id}
-                            className="border-t border-slate-200 bg-slate-50/60"
-                          >
-                            <td className="px-5 py-4">
-                              <div className="flex items-center gap-3">
-                                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-200 text-xs font-semibold text-slate-600">
-                                  {initialsFrom(invite.invited_email)}
-                                </div>
-                                <div>
-                                  <div className="text-sm font-semibold text-slate-900">
-                                    {invite.invited_email}
-                                  </div>
-                                  <div className="text-xs text-slate-500">
-                                    Invited {formatTimestamp(invite.created_at)}
-                                  </div>
-                                </div>
-                              </div>
-                            </td>
-                            <td className="px-5 py-4">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <Badge variant="warning">Pending</Badge>
-                                <Badge variant={roleBadgeVariant(invite.role)}>
-                                  {invite.role}
-                                </Badge>
-                              </div>
-                            </td>
-                            <td className="px-5 py-4 text-slate-600">
-                              {summarizeAccess(
-                                invite.all_boards_read,
-                                invite.all_boards_write,
-                              )}
-                            </td>
-                            <td className="px-5 py-4 text-right">
-                              <div className="flex flex-wrap items-center justify-end gap-2">
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => handleCopyInvite(invite)}
-                                >
-                                  <Copy className="h-4 w-4" />
-                                  {copiedInviteId === invite.id
-                                    ? "Copied"
-                                    : "Copy link"}
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() =>
-                                    revokeInviteMutation.mutate({
-                                      inviteId: invite.id,
-                                    })
-                                  }
-                                  disabled={revokeInviteMutation.isPending}
-                                >
-                                  Revoke
-                                </Button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))
-                      : null}
-
-                    {!membersQuery.isLoading &&
-                    (!isAdmin || !invitesQuery.isLoading) &&
-                    members.length === 0 &&
-                    (!isAdmin || invites.length === 0) ? (
-                      <tr>
-                        <td
-                          colSpan={4}
-                          className="px-5 py-6 text-center text-sm text-slate-500"
-                        >
-                          No members or invites yet.
-                        </td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
+                <MembersInvitesTable
+                  members={members}
+                  invites={isAdmin ? invites : []}
+                  isLoading={
+                    membersQuery.isLoading ||
+                    (isAdmin && invitesQuery.isLoading)
+                  }
+                  isAdmin={isAdmin}
+                  copiedInviteId={copiedInviteId}
+                  onManageAccess={openAccessDialog}
+                  onCopyInvite={handleCopyInvite}
+                  onRevokeInvite={(inviteId) =>
+                    revokeInviteMutation.mutate({
+                      inviteId,
+                    })
+                  }
+                  isRevoking={revokeInviteMutation.isPending}
+                />
               </div>
             </div>
           </div>
