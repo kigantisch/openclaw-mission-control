@@ -137,22 +137,26 @@ export default function SkillsMarketplacePage() {
     });
   }, [selectedPack, skills]);
 
-  const loadSkillsByGateway = useCallback(
-    async () =>
-      Promise.all(
-        gateways.map(async (gateway) => {
-          const response = await listMarketplaceSkillsApiV1SkillsMarketplaceGet({
-            gateway_id: gateway.id,
-          });
-          return {
-            gatewayId: gateway.id,
-            gatewayName: gateway.name,
-            skills: response.status === 200 ? response.data : [],
-          };
-        }),
-      ),
-    [gateways],
-  );
+  const loadSkillsByGateway = useCallback(async () => {
+    // NOTE: This is technically N+1 (one request per gateway). We intentionally
+    // parallelize requests to keep the UI responsive and avoid slow sequential
+    // fetches. If this becomes a bottleneck for large gateway counts, add a
+    // backend batch endpoint to return installation state across all gateways.
+    const gatewaySkills = await Promise.all(
+      gateways.map(async (gateway) => {
+        const response = await listMarketplaceSkillsApiV1SkillsMarketplaceGet({
+          gateway_id: gateway.id,
+        });
+        return {
+          gatewayId: gateway.id,
+          gatewayName: gateway.name,
+          skills: response.status === 200 ? response.data : [],
+        };
+      }),
+    );
+
+    return gatewaySkills;
+  }, [gateways]);
 
   const updateInstalledGatewayNames = useCallback(
     ({
