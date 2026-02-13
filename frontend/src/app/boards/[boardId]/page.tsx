@@ -24,6 +24,10 @@ import { Markdown } from "@/components/atoms/Markdown";
 import { StatusDot } from "@/components/atoms/StatusDot";
 import { DashboardSidebar } from "@/components/organisms/DashboardSidebar";
 import { TaskBoard } from "@/components/organisms/TaskBoard";
+import {
+  DependencyBanner,
+  type DependencyBannerDependency,
+} from "@/components/molecules/DependencyBanner";
 import { DashboardShell } from "@/components/templates/DashboardShell";
 import { BoardChatComposer } from "@/components/BoardChatComposer";
 import { Button } from "@/components/ui/button";
@@ -2211,6 +2215,56 @@ export default function BoardDetailPage() {
     [loadComments],
   );
 
+  const selectedTaskDependencies = useMemo<DependencyBannerDependency[]>(() => {
+    if (!selectedTask) return [];
+    const blockedDependencyIds = new Set(
+      selectedTask.blocked_by_task_ids ?? [],
+    );
+    return (selectedTask.depends_on_task_ids ?? []).map((dependencyId) => {
+      const dependencyTask = taskById.get(dependencyId);
+      const statusLabel = dependencyTask?.status
+        ? dependencyTask.status.replace(/_/g, " ")
+        : "unknown";
+      return {
+        id: dependencyId,
+        title: dependencyTask?.title ?? dependencyId,
+        statusLabel,
+        isBlocking: blockedDependencyIds.has(dependencyId),
+        isDone: dependencyTask?.status === "done",
+        disabled: !dependencyTask,
+        onClick: dependencyTask
+          ? () => {
+              openComments({ id: dependencyId });
+            }
+          : undefined,
+      };
+    });
+  }, [openComments, selectedTask, taskById]);
+
+  const selectedTaskResolvedDependencies = useMemo<
+    DependencyBannerDependency[]
+  >(() => {
+    if (!selectedTask) return [];
+    return tasks
+      .filter((task) => task.depends_on_task_ids?.includes(selectedTask.id))
+      .map((task) => {
+        const statusLabel = task.status
+          ? task.status.replace(/_/g, " ")
+          : "unknown";
+        return {
+          id: task.id,
+          title: task.title,
+          statusLabel,
+          isBlocking: false,
+          isDone: task.status === "done",
+          onClick: () => {
+            openComments({ id: task.id });
+          },
+          disabled: false,
+        };
+      });
+  }, [openComments, selectedTask, tasks]);
+
   useEffect(() => {
     if (!taskIdFromUrl) return;
     if (openedTaskIdFromUrlRef.current === taskIdFromUrl) return;
@@ -3382,63 +3436,43 @@ export default function BoardDetailPage() {
               <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
                 Dependencies
               </p>
-              {selectedTask?.depends_on_task_ids?.length ? (
-                <div className="space-y-2">
-                  {selectedTask.depends_on_task_ids.map((depId) => {
-                    const depTask = taskById.get(depId);
-                    const title = depTask?.title ?? depId;
-                    const statusLabel = depTask?.status
-                      ? depTask.status.replace(/_/g, " ")
-                      : "unknown";
-                    const isDone = depTask?.status === "done";
-                    const isBlocking = (
-                      selectedTask.blocked_by_task_ids ?? []
-                    ).includes(depId);
-                    return (
-                      <button
-                        key={depId}
-                        type="button"
-                        onClick={() => openComments({ id: depId })}
-                        disabled={!depTask}
-                        className={cn(
-                          "w-full rounded-lg border px-3 py-2 text-left transition",
-                          isBlocking
-                            ? "border-rose-200 bg-rose-50 hover:bg-rose-100/40"
-                            : isDone
-                              ? "border-emerald-200 bg-emerald-50 hover:bg-emerald-100/40"
-                              : "border-slate-200 bg-white hover:bg-slate-50",
-                          !depTask && "cursor-not-allowed opacity-60",
-                        )}
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <p className="truncate text-sm font-medium text-slate-900">
-                            {title}
-                          </p>
-                          <span
-                            className={cn(
-                              "text-[10px] font-semibold uppercase tracking-wide",
-                              isBlocking
-                                ? "text-rose-700"
-                                : isDone
-                                  ? "text-emerald-700"
-                                  : "text-slate-500",
-                            )}
-                          >
-                            {statusLabel}
-                          </span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : (
-                <p className="text-sm text-slate-500">No dependencies.</p>
-              )}
-              {selectedTask?.is_blocked ? (
-                <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
-                  Blocked by incomplete dependencies.
-                </div>
-              ) : null}
+              {(() => {
+                const hasDependencies =
+                  (selectedTask?.depends_on_task_ids?.length ?? 0) > 0;
+                const hasResolvedDependencies =
+                  selectedTaskResolvedDependencies.length > 0;
+                const isDependencyModeBlocked = hasDependencies
+                  ? selectedTask?.is_blocked === true
+                  : false;
+                const bannerVariant =
+                  hasDependencies || hasResolvedDependencies
+                    ? isDependencyModeBlocked
+                      ? "blocked"
+                      : "resolved"
+                    : "blocked";
+                const displayedDependencies =
+                  hasDependencies && selectedTask
+                    ? selectedTaskDependencies
+                    : selectedTaskResolvedDependencies;
+                const childrenMessage =
+                  hasDependencies && selectedTask?.is_blocked
+                    ? "Blocked by incomplete dependencies."
+                    : hasDependencies
+                      ? "Dependencies resolved."
+                      : hasResolvedDependencies
+                        ? "This task resolves these tasks."
+                        : null;
+
+                return (
+                  <DependencyBanner
+                    dependencies={displayedDependencies}
+                    variant={bannerVariant}
+                    emptyMessage="No dependencies."
+                  >
+                    {childrenMessage}
+                  </DependencyBanner>
+                );
+              })()}
             </div>
             <div className="space-y-3">
               <div className="flex items-center justify-between">
