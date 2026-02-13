@@ -398,6 +398,66 @@ async def test_sync_pack_clones_and_upserts_skills(monkeypatch: pytest.MonkeyPat
 
 
 @pytest.mark.asyncio
+async def test_create_skill_pack_rejects_non_https_source_url() -> None:
+    engine = await _make_engine()
+    session_maker = async_sessionmaker(
+        engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+    try:
+        async with session_maker() as session:
+            organization, _gateway = await _seed_base(session)
+            await session.commit()
+
+        app = _build_test_app(session_maker, organization=organization)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            response = await client.post(
+                "/api/v1/skills/packs",
+                json={"source_url": "http://github.com/sickn33/antigravity-awesome-skills"},
+            )
+
+        assert response.status_code == 400
+        assert "scheme" in response.json()["detail"].lower() or "https" in response.json()["detail"].lower()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_create_skill_pack_rejects_localhost_source_url() -> None:
+    engine = await _make_engine()
+    session_maker = async_sessionmaker(
+        engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+    try:
+        async with session_maker() as session:
+            organization, _gateway = await _seed_base(session)
+            await session.commit()
+
+        app = _build_test_app(session_maker, organization=organization)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            response = await client.post(
+                "/api/v1/skills/packs",
+                json={"source_url": "https://localhost/skills-pack"},
+            )
+
+        assert response.status_code == 400
+        assert "hostname" in response.json()["detail"].lower() or "not allowed" in response.json()["detail"].lower()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_list_skill_packs_includes_skill_count() -> None:
     engine = await _make_engine()
     session_maker = async_sessionmaker(
