@@ -402,6 +402,31 @@ def _inject_tagged_operation_openapi_docs(openapi_schema: dict[str, Any]) -> Non
                         )
 
 
+def _build_custom_openapi(fastapi_app: FastAPI) -> dict[str, Any]:
+    """Generate OpenAPI schema with normalized docs/examples for targeted tags."""
+    if fastapi_app.openapi_schema:
+        return fastapi_app.openapi_schema
+    openapi_schema = get_openapi(
+        title=fastapi_app.title,
+        version=fastapi_app.version,
+        openapi_version=fastapi_app.openapi_version,
+        description=fastapi_app.description,
+        routes=fastapi_app.routes,
+        tags=fastapi_app.openapi_tags,
+        servers=fastapi_app.servers,
+    )
+    _inject_tagged_operation_openapi_docs(openapi_schema)
+    fastapi_app.openapi_schema = openapi_schema
+    return fastapi_app.openapi_schema
+
+
+class MissionControlFastAPI(FastAPI):
+    """FastAPI application with custom OpenAPI normalization."""
+
+    def openapi(self) -> dict[str, Any]:
+        return _build_custom_openapi(self)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Initialize application resources before serving requests."""
@@ -418,7 +443,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         logger.info("app.lifecycle.stopped")
 
 
-app = FastAPI(
+app = MissionControlFastAPI(
     title="Mission Control API",
     version="0.1.0",
     lifespan=lifespan,
@@ -519,27 +544,6 @@ api_v1.include_router(task_custom_fields_router)
 api_v1.include_router(tags_router)
 api_v1.include_router(users_router)
 app.include_router(api_v1)
-
-
-def custom_openapi() -> dict[str, Any]:
-    """Generate OpenAPI schema with normalized docs/examples for targeted tags."""
-    if app.openapi_schema:
-        return app.openapi_schema
-    openapi_schema = get_openapi(
-        title=app.title,
-        version=app.version,
-        openapi_version=app.openapi_version,
-        description=app.description,
-        routes=app.routes,
-        tags=app.openapi_tags,
-        servers=app.servers,
-    )
-    _inject_tagged_operation_openapi_docs(openapi_schema)
-    app.openapi_schema = openapi_schema
-    return app.openapi_schema
-
-
-app.openapi = custom_openapi
 
 add_pagination(app)
 logger.debug("app.routes.registered count=%s", len(app.routes))
