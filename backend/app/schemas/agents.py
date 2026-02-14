@@ -7,7 +7,8 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import ConfigDict, Field, field_validator
+from pydantic import Field, field_validator
+from sqlmodel._compat import SQLModelConfig
 from sqlmodel import SQLModel
 
 from app.schemas.common import NonEmptyStr
@@ -42,7 +43,7 @@ def _normalize_identity_profile(
 class AgentBase(SQLModel):
     """Common fields shared by agent create/read/update payloads."""
 
-    model_config = ConfigDict(
+    model_config = SQLModelConfig(
         json_schema_extra={
             "x-llm-intent": "agent_profile",
             "x-when-to-use": [
@@ -129,7 +130,7 @@ class AgentCreate(AgentBase):
 class AgentUpdate(SQLModel):
     """Payload for patching an existing agent."""
 
-    model_config = ConfigDict(
+    model_config = SQLModelConfig(
         json_schema_extra={
             "x-llm-intent": "agent_profile_update",
             "x-when-to-use": [
@@ -214,7 +215,7 @@ class AgentUpdate(SQLModel):
 class AgentRead(AgentBase):
     """Public agent representation returned by the API."""
 
-    model_config = ConfigDict(
+    model_config = SQLModelConfig(
         json_schema_extra={
             "x-llm-intent": "agent_profile_lookup",
             "x-when-to-use": [
@@ -251,7 +252,7 @@ class AgentRead(AgentBase):
 class AgentHeartbeat(SQLModel):
     """Heartbeat status payload sent by agents."""
 
-    model_config = ConfigDict(
+    model_config = SQLModelConfig(
         json_schema_extra={
             "x-llm-intent": "agent_health_signal",
             "x-when-to-use": [
@@ -272,7 +273,7 @@ class AgentHeartbeat(SQLModel):
 class AgentHeartbeatCreate(AgentHeartbeat):
     """Heartbeat payload used to create an agent lazily."""
 
-    model_config = ConfigDict(
+    model_config = SQLModelConfig(
         json_schema_extra={
             "x-llm-intent": "agent_bootstrap",
             "x-when-to-use": [
@@ -298,7 +299,7 @@ class AgentHeartbeatCreate(AgentHeartbeat):
 class AgentNudge(SQLModel):
     """Nudge message payload for pinging an agent."""
 
-    model_config = ConfigDict(
+    model_config = SQLModelConfig(
         json_schema_extra={
             "x-llm-intent": "agent_nudge",
             "x-when-to-use": [

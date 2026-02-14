@@ -5,8 +5,9 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import AnyHttpUrl, ConfigDict
+from pydantic import AnyHttpUrl
 from sqlmodel import Field, SQLModel
+from sqlmodel._compat import SQLModelConfig
 
 from app.schemas.common import NonEmptyStr
 
@@ -30,7 +31,7 @@ class SkillPackCreate(SQLModel):
     branch: str = "main"
     metadata_: dict[str, object] = Field(default_factory=dict, alias="metadata")
 
-    model_config = ConfigDict(validate_by_name=True)
+    model_config = SQLModelConfig(validate_by_name=True)
 
 
 class MarketplaceSkillRead(SQLModel):
@@ -46,7 +47,7 @@ class MarketplaceSkillRead(SQLModel):
     source_url: str
     metadata_: dict[str, object] = Field(default_factory=dict, alias="metadata")
 
-    model_config = ConfigDict(validate_by_name=True)
+    model_config = SQLModelConfig(validate_by_name=True)
 
     created_at: datetime
     updated_at: datetime
@@ -63,7 +64,7 @@ class SkillPackRead(SQLModel):
     branch: str
     metadata_: dict[str, object] = Field(default_factory=dict, alias="metadata")
 
-    model_config = ConfigDict(validate_by_name=True)
+    model_config = SQLModelConfig(validate_by_name=True)
 
     skill_count: int = 0
     created_at: datetime

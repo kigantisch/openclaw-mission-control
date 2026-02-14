@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from pydantic import ConfigDict, Field
+from pydantic import Field
 from sqlmodel import SQLModel
+from sqlmodel._compat import SQLModelConfig
 
 
 class LLMErrorResponse(SQLModel):
     """Standardized LLM-facing error payload used by API contracts."""
 
-    model_config = ConfigDict(
+    model_config = SQLModelConfig(
         json_schema_extra={
             "title": "LLMErrorResponse",
             "x-llm-intent": "llm_error_handling",

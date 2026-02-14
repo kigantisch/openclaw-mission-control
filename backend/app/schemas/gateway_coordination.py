@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import Literal
 from uuid import UUID
 
-from pydantic import ConfigDict, Field
+from pydantic import Field
+from sqlmodel._compat import SQLModelConfig
 from sqlmodel import SQLModel
 
 from app.schemas.common import NonEmptyStr
@@ -24,7 +25,7 @@ def _user_reply_tags() -> list[str]:
 class GatewayLeadMessageRequest(SQLModel):
     """Request payload for sending a message to a board lead agent."""
 
-    model_config = ConfigDict(
+    model_config = SQLModelConfig(
         json_schema_extra={
             "x-llm-intent": "lead_direct_message",
             "x-when-to-use": [
@@ -71,7 +72,7 @@ class GatewayLeadMessageRequest(SQLModel):
 class GatewayLeadMessageResponse(SQLModel):
     """Response payload for a lead-message dispatch attempt."""
 
-    model_config = ConfigDict(
+    model_config = SQLModelConfig(
         json_schema_extra={
             "x-llm-intent": "lead_direct_message_result",
             "x-when-to-use": [
@@ -104,7 +105,7 @@ class GatewayLeadMessageResponse(SQLModel):
 class GatewayLeadBroadcastRequest(SQLModel):
     """Request payload for broadcasting a message to multiple board leads."""
 
-    model_config = ConfigDict(
+    model_config = SQLModelConfig(
         json_schema_extra={
             "x-llm-intent": "lead_broadcast_message",
             "x-when-to-use": [
@@ -154,7 +155,7 @@ class GatewayLeadBroadcastRequest(SQLModel):
 class GatewayLeadBroadcastBoardResult(SQLModel):
     """Per-board result entry for a lead broadcast operation."""
 
-    model_config = ConfigDict(
+    model_config = SQLModelConfig(
         json_schema_extra={
             "x-llm-intent": "lead_broadcast_status",
             "x-when-to-use": [
@@ -184,7 +185,7 @@ class GatewayLeadBroadcastBoardResult(SQLModel):
 class GatewayLeadBroadcastResponse(SQLModel):
     """Aggregate response for a lead broadcast operation."""
 
-    model_config = ConfigDict(
+    model_config = SQLModelConfig(
         json_schema_extra={
             "x-llm-intent": "lead_broadcast_summary",
             "x-when-to-use": [
@@ -208,7 +209,7 @@ class GatewayLeadBroadcastResponse(SQLModel):
 class GatewayMainAskUserRequest(SQLModel):
     """Request payload for asking the end user via a main gateway agent."""
 
-    model_config = ConfigDict(
+    model_config = SQLModelConfig(
         json_schema_extra={
             "x-llm-intent": "human_escalation_request",
             "x-when-to-use": [
@@ -252,7 +253,7 @@ class GatewayMainAskUserRequest(SQLModel):
 class GatewayMainAskUserResponse(SQLModel):
     """Response payload for user-question dispatch via gateway main agent."""
 
-    model_config = ConfigDict(
+    model_config = SQLModelConfig(
         json_schema_extra={
             "x-llm-intent": "human_escalation_result",
             "x-when-to-use": [
