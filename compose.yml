@@ -45,6 +45,11 @@ services:
       AUTH_MODE: ${AUTH_MODE}
       LOCAL_AUTH_TOKEN: ${LOCAL_AUTH_TOKEN}
       RQ_REDIS_URL: redis://redis:6379/0
+      OPENCLAW_GW_URL: ${OPENCLAW_GW_URL:-ws://openclaw:57864}
+      OPENCLAW_GW_TOKEN: ${OPENCLAW_GW_TOKEN:-}
+    networks:
+      - default
+      - openclaw_net
     depends_on:
       db:
         condition: service_healthy
@@ -107,6 +112,11 @@ services:
       - frontend
       - backend
     restart: unless-stopped
+
+networks:
+  openclaw_net:
+    external: true
+    name: openclaw-fxvq_default
 
 volumes:
   postgres_data:

@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi_pagination import add_pagination
 
+from app.api.chat import router as chat_router
 from app.api.activity import router as activity_router
 from app.api.agent import router as agent_router
 from app.api.agents import router as agents_router
@@ -530,6 +531,7 @@ def readyz() -> HealthStatusResponse:
 
 
 api_v1 = APIRouter(prefix="/api/v1")
+api_v1.include_router(chat_router)
 api_v1.include_router(auth_router)
 api_v1.include_router(agent_router)
 api_v1.include_router(agents_router)

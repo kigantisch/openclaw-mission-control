@@ -69,6 +69,10 @@ class Settings(BaseSettings):
     # OpenClaw gateway runtime compatibility
     gateway_min_version: str = "2026.02.9"
 
+    # OpenClaw CEO Dashboard chat (direct gateway connection)
+    openclaw_gw_url: str = "ws://host.docker.internal:57864"
+    openclaw_gw_token: str = ""
+
     # Logging
     log_level: str = "INFO"
     log_format: str = "text"
