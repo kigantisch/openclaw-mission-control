@@ -25,7 +25,6 @@ import { Activity, PenSquare, Timer, Users } from "lucide-react";
 
 import { DashboardSidebar } from "@/components/organisms/DashboardSidebar";
 import { DashboardShell } from "@/components/templates/DashboardShell";
-import FranzChat from "@/components/organisms/FranzChat";
 import DropdownSelect, {
   type DropdownSelectOption,
 } from "@/components/ui/dropdown-select";
@@ -803,7 +802,6 @@ export default function DashboardPage() {
           </div>
         </main>
       </SignedIn>
-      <FranzChat />
     </DashboardShell>
   );
 }
